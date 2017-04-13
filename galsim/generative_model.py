@@ -21,5 +21,45 @@ Base class defining a generative model of galaxy images.
 A generative model can be trained on some real astrophysical data and then used
 to conditionally sample new galaxy images. 
 
+TODO: Add documentation.
 """
 
+import galsim
+from abc import ABCMeta, abstractmethod
+
+class GenerativeGalaxyModel(object):
+    """
+    Base class defining a generative galaxy model
+    
+    """
+    __metaclass__ = ABCMeta
+
+    def __init__(self, quantities=[]):
+        """
+        Initialisation of the generator, must specify a list of predictors
+        and features to predict
+        """
+        self.quantities = quantities
+
+    @abstractmethod
+    def fit(self):
+        """
+        Fits the generative model on provided data
+        """
+        pass
+
+
+    @abstractmethod
+    def write(self):
+        """
+        Exports the parameters of the model
+        """
+        pass
+
+    
+    @abstractmethod
+    def sample(self):
+        """
+        Samples galaxy images from the model
+        """
+        pass
