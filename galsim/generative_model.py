@@ -24,8 +24,8 @@ to conditionally sample new galaxy images.
 TODO: Add documentation.
 """
 import galsim
-from abc import ABCMeta, abstractmethod
 
+from abc import ABCMeta, abstractmethod
 
 class GenerativeGalaxyModel(object):
     """
@@ -57,6 +57,6 @@ class GenerativeGalaxyModel(object):
     @abstractmethod
     def sample(self):
         """
-        Samples galaxy images from the model
+        Samples galaxy images from the model`
         """
         pass

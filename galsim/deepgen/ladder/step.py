@@ -5,7 +5,6 @@ import lasagne
 from lasagne.nonlinearities import sigmoid, rectify, elu, tanh, identity, softmax
 from lasagne.init import GlorotUniform, Constant
 from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer, Conv2DLayer, BatchNormLayer
-from lasagne.layers.dnn import Conv2DDNNLayer, Pool2DDNNLayer
 from lasagne.layers import DenseLayer, InputLayer, ConcatLayer, ReshapeLayer, FlattenLayer, NonlinearityLayer, get_output, get_all_params, batch_norm, get_output_shape
 
 from ..layers.sample import GaussianSampleLayer, BernoulliSampleLayer
@@ -138,7 +137,7 @@ class resnet_step(ladder_step):
         input_dim = get_output_shape(input_layer)[1]
 
         if self.prefilter:
-            network = Conv2DDNNLayer(input_layer, num_filters=self.n_filters[0], filter_size=1, pad='same', stride=1, nonlinearity=None, W=GlorotUniform())
+            network = Conv2DLayer(input_layer, num_filters=self.n_filters[0], filter_size=1, pad='same', stride=1, nonlinearity=None, W=GlorotUniform())
         else:
             network = input_layer
 
@@ -151,8 +150,8 @@ class resnet_step(ladder_step):
                 network = preactivation_resnet(network, n_out_filters=n_filter, filter_size=3)
 
         # Creating mu and sigma layers
-        mu = Conv2DDNNLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform())
-        logvar = ClampLogVarLayer(Conv2DDNNLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform()))
+        mu = Conv2DLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform())
+        logvar = ClampLogVarLayer(Conv2DLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform()))
         samp = GaussianSampleLayer(mean=mu, log_var=logvar)
 
         return mu, logvar, samp
@@ -174,19 +173,18 @@ class resnet_step(ladder_step):
                 network = transposed_preactivation_resnet(network, n_out_filters=n_filter, filter_size=3)
 
         # Computing
-        mu = Conv2DDNNLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform())
-        logvar = ClampLogVarLayer(Conv2DDNNLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform()))
+        mu = Conv2DLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform())
+        logvar = ClampLogVarLayer(Conv2DLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform()))
         smpl = GaussianSampleLayer(mean=mu, log_var=logvar)
         return mu, logvar, smpl
 
 class dens_step(ladder_step):
 
-    def __init__(self, input_shape, output_shape, n_units=[128, 128], nonlinearity=elu):
+    def __init__(self, n_out, n_units=[128, 128], nonlinearity=elu):
         """
 
         """
-        self.input_shape = input_shape
-        self.output_shape = output_shape
+        self.output_shape = n_out
         self.n_units = n_units
         self.nonlinearity = nonlinearity
 
@@ -194,6 +192,10 @@ class dens_step(ladder_step):
         """
         Copmute bottom up pass through a dense layer
         """
+        
+        # Saves the input layer shape for latter
+        self.input_shape = get_output_shape(input_layer)
+        
         # Concatenate the two input layers
         network = ConcatLayer([FlattenLayer(input_layer), y])
 

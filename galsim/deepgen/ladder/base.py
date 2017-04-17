@@ -4,15 +4,18 @@ sys.setrecursionlimit(10000)
 import theano
 import theano.tensor as T
 
-from lasagne.layers import get_output, get_all_params, get_output_shape
+from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer
 from lasagne.updates import adam, total_norm_constraint
 
 from ..blocks.IAF import MADE_IAF
 
+
 class ladder(object):
 
-    def __init__(self, steps, prior, input_layers, input_variables,
-                 hidden_sizes=[],
+    def __init__(self, n_c, n_x, n_y,
+                 steps, prior,
+                 batch_size=32,
+                 IAF_size=[[128,128], [128,128]],
                  learning_rate=0.001):
         """
         Initialises the ladder structure
@@ -31,28 +34,38 @@ class ladder(object):
         self.steps = steps
         self.prior = prior
         self.learning_rate = learning_rate
-        self.input_layers = input_layers
-        self.input_variables = input_variables
-        self.hidden_sizes = hidden_sizes
-
+        self.hidden_sizes = IAF_size
+        self.batch_size = batch_size
+        self.n_c = n_c
+        self.n_x = n_x
+        self.n_y = n_y
+        
+        # Input variable
+        self._x = T.tensor4('x')
+        # Input condition
+        self._y = T.matrix('y')
+        # Code variable
         self._z = T.matrix('z')
+        # Variable for the learning rate
         self._lr = T.scalar('lr')
+        
+        
+        self.l_x = InputLayer(shape=(self.batch_size, self.n_c,
+                                     self.n_x, self.n_x),
+                              input_var=self._x, name='x')
+        
+        self.l_y = InputLayer(shape=(self.batch_size, self.n_y),
+                              input_var=self._y, name='y')
 
-    def _build(self):
-        """
-        Builds the ladder from a list of steps
-        """
-        l_x, l_y = self.input_layers
-        x, y = self.input_variables
-        self.inputs = {l_x: x, l_y: y}
+        self.inputs = {self.l_x: self._x, self.l_y: self._y}
 
         ### Build and connect network
         # Connect the deterministic upward pass
-        d_mu = l_x
-        print "input shape", get_output_shape(d_mu)
+        d_mu = self.l_x
+        print("input shape", get_output_shape(d_mu))
         for s in self.steps:
-            d_mu = s.connect_upward(d_mu, l_y)
-            print "bottom-up", get_output_shape(d_mu)
+            d_mu = s.connect_upward(d_mu, self.l_y)
+            print("bottom-up", get_output_shape(d_mu))
 
         # Use an IAF parametrisation for the code
         self.code_layer, self.logqz = MADE_IAF(self.steps[-1].d_mu,
@@ -66,15 +79,15 @@ class ladder(object):
 
         for i, s in enumerate(self.steps[::-1]):
             if i == 0:
-                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, l_y, qz_smpl=qz_smpl)
+                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, self.l_y, qz_smpl=qz_smpl)
             else:
-                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, l_y, tz_mu=qz_mu, tz_logvar=qz_logvar)
-            print "top-down", get_output_shape(pz_smpl)
+                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, self.l_y, tz_mu=qz_mu, tz_logvar=qz_logvar)
+            print("top-down", get_output_shape(pz_smpl))
         # Changing output layer to the mean, for a Gaussian model where the noise is known
         self.output_layer = self.steps[0].p_mu
 
         # Connect prior network
-        self.prior_layer = self.prior.connect(l_y)
+        self.prior_layer = self.prior.connect(self.l_y)
 
         ### Compute the cost function
         # KL divergence of the code
@@ -105,24 +118,30 @@ class ladder(object):
         grads = T.grad(LL, params)
         #max_norm = 1.
         #mgrads = total_norm_constraint(grads, max_norm=max_norm)
-        #clip_grad = 1.
-        #cgrads = [T.clip(g, -clip_grad, clip_grad) for g in mgrads]
-        updates = adam(grads, params, learning_rate=self._lr)
+        clip_grad = 10.
+        cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
+        updates = adam(cgrads, params, learning_rate=self._lr)
 
-        self._trainer = theano.function([x, y, self._lr], [LL, log_px.mean(), kl_prior.mean()], updates=updates)
+        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_prior.mean()], updates=updates)
 
         # Get outputs from the recognition network
         z_smpl = get_output(self.code_layer, inputs=self.inputs, deterministic=True)
-        self._code_sampler = theano.function([x, y], z_smpl)
+        self._code_sampler = theano.function([self._x, self._y], z_smpl)
 
         # Get outputs from the prior network
-        pz_smpl = get_output(self.prior_layer, inputs={l_y: y}, deterministic=True)
-        self._prior_sampler = theano.function([y], pz_smpl)
+        pz_smpl = get_output(self.prior_layer, inputs={self.l_y: self._y}, deterministic=True)
+        self._prior_sampler = theano.function([self._y], pz_smpl)
 
         # Get outputs from the generative network
-        x_smpl = get_output(self.output_layer, inputs={self.code_layer: self._z, l_y: y}, deterministic=True)
-        self._output_sampler = theano.function([self._z, y], x_smpl)
+        x_smpl = get_output(self.output_layer, inputs={self.code_layer: self._z,
+                                                       self.l_y: self._y},
+                            deterministic=True)
+        self._output_sampler = theano.function([self._z, self._y], x_smpl)
 
         # Get outputs from the generative network mean
-        x_smpl_mean = get_output(self.steps[0].p_mu, inputs={self.code_layer: self._z, l_y: y}, deterministic=True)
-        self._output_sampler_mean = theano.function([self._z, y], x_smpl_mean)
+        x_smpl_mean = get_output(self.steps[0].p_mu, inputs={self.code_layer: self._z,
+                                                             self.l_y: self._y}, deterministic=True)
+        self._output_sampler_mean = theano.function([self._z, self._y], x_smpl_mean)
+
+
+
