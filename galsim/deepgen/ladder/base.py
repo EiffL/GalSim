@@ -6,6 +6,7 @@ import theano.tensor as T
 
 from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer
 from lasagne.updates import adam, total_norm_constraint
+from lasagne.regularization import regularize_network_params, l2
 
 from ..blocks.IAF import MADE_IAF
 
@@ -16,7 +17,8 @@ class ladder(object):
                  steps, prior,
                  batch_size=32,
                  IAF_size=[[128,128], [128,128]],
-                 learning_rate=0.001):
+                 learning_rate=0.001,
+                 l2_reg=1e-4):
         """
         Initialises the ladder structure
 
@@ -39,6 +41,7 @@ class ladder(object):
         self.n_c = n_c
         self.n_x = n_x
         self.n_y = n_y
+        self.l2_reg = l2_reg
         
         # Input variable
         self._x = T.tensor4('x')
@@ -109,6 +112,9 @@ class ladder(object):
         # Averaging over mini-batch
         LL = LL.mean()
 
+        # Adding l2 regularization
+        #LL = LL + regularize_network_params(self.prior_layer, l2) * l2_reg
+
         # Get trainable parameters and generate updates
         params = get_all_params([self.output_layer,
                                  self.steps[0].qz_smpl,
@@ -122,7 +128,7 @@ class ladder(object):
         cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
         updates = adam(cgrads, params, learning_rate=self._lr)
 
-        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_prior.mean()], updates=updates)
+        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_prior.mean(), self.logqz.mean()], updates=updates)
 
         # Get outputs from the recognition network
         z_smpl = get_output(self.code_layer, inputs=self.inputs, deterministic=True)

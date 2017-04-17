@@ -5,6 +5,7 @@ import theano.tensor as T
 from lasagne.layers import DenseLayer, InputLayer, ConcatLayer, ReshapeLayer, FlattenLayer, NonlinearityLayer, get_output, get_all_params, batch_norm, get_output_shape
 from lasagne.nonlinearities import sigmoid, rectify, elu, tanh, identity, softmax
 from ..layers.sample import GaussianSampleLayer, GMSampleLayer
+from ..layers.transform import ClampLogVarLayer
 from lasagne.init import GlorotUniform, Constant
 
 from ..distributions import kl_normal2_gm2, log_gm2
@@ -77,11 +78,11 @@ class gmm_prior(ladder_prior):
                                                  name='pz_mu'),
                                      shape=(self.batch_size, self.n_hidden, self.n_gaussians))
 
-        self._l_pz_log_var = ReshapeLayer(DenseLayer( network,
+        self._l_pz_log_var = ClampLogVarLayer(ReshapeLayer(DenseLayer( network,
                                                       num_units=self.n_hidden*self.n_gaussians,
                                                       nonlinearity=identity, W=Constant(),
                                                       name='pz_log_var'),
-                                           shape=(self.batch_size, self.n_hidden, self.n_gaussians))
+                                            shape=(self.batch_size, self.n_hidden, self.n_gaussians)))
 
         self._l_pw = DenseLayer(network, num_units=self.n_gaussians, nonlinearity=softmax, name='pw_log_var')
 
