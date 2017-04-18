@@ -7,6 +7,9 @@ from lasagne.init import GlorotUniform, Constant
 from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer, Conv2DLayer, BatchNormLayer
 from lasagne.layers import DenseLayer, InputLayer, ConcatLayer, ReshapeLayer, FlattenLayer, NonlinearityLayer, get_output, get_all_params, batch_norm, get_output_shape
 
+from lasagne.init import HeNormal
+from lasagne.layers import BatchNormLayer, NonlinearityLayer, SliceLayer, ElemwiseSumLayer, DropoutLayer
+
 from ..layers.sample import GaussianSampleLayer, BernoulliSampleLayer
 from ..layers.transform import ScaleShiftLayer, CropLayer, ClampLogVarLayer
 from ..blocks.resnet import preactivation_resnet, transposed_preactivation_resnet
@@ -59,57 +62,33 @@ class ladder_step():
         """
         self.noise_std = noise_std
 
-    def bottom_up(self, input_layer, y):
-        """
-        Creates the bottom up architecture of the block
-        """
-        return input_layer
-
-    def top_down(self, input_layer, y):
-        """
-        Creates the top down architecture of the block
-        """
-        return input_layer
-
+    
     def connect_upward(self, d, y):
-        self.d_in = d
-        self.d_mu, self.d_logvar, self.d_smpl = self.bottom_up(d, y)
-        return self.d_mu
+        
+        return d
 
-    def connect_downward(self, p, y, qz_smpl=None, tz_mu=None, tz_logvar=None):
-        assert (qz_smpl is not None) or ((tz_mu is not None) and (tz_logvar is not None))
+    def connect_downward(self, p, y):
+        
+        return p
 
-        self.p_mu, self.p_logvar, self.p_smpl = self.top_down(p, y)
-
-        if qz_smpl is None:
-            # Combine top-down inference information
-            self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, tz_mu, tz_logvar)
-            self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
-            self.qz_smpl = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar)
-        else:
-            self.qz_smpl = qz_smpl
-
-        self.t_mu, self.t_logvar, self.t_smpl = self.top_down(self.qz_smpl, y)
-        return self.p_smpl, self.t_mu, self.t_logvar
-
-    def kl_normal(self, inputs, top_step):
+    def kl_normal(self, inputs):
         """
-        Computes the kl divergence between this layer and
+        Computes the kl divergence of the lattent variables in this layer
         """
         # Computes the inference network posterior
         qz_mu, qz_logvar, pz_mu, pz_logvar = get_output([
             self.qz_mu, self.qz_logvar,
-            top_step.p_mu, top_step.p_logvar], inputs=inputs)
+            self.pz_mu, self.pz_logvar], inputs=inputs)
 
         shape = get_output_shape(self.qz_mu)
         # Sum over output dimensions but not the batchsize
-        return  kl_normal2_normal2(qz_mu, qz_logvar, pz_mu, pz_logvar, eps=1e-6).clip(0.125,100).sum(axis=range(1,len(shape)))
+        return  kl_normal2_normal2(qz_mu, qz_logvar, pz_mu, pz_logvar, eps=1e-6).sum(axis=range(1,len(shape)))
 
     def log_likelihood(self, inputs):
         """
         Computes the log likelihood of the model
         """
-        x, x_mu, x_log_var = get_output([self.d_in, self.p_mu, self.p_logvar],
+        x, x_mu = get_output([self.d_in, self.top_down_net],
                                          inputs=inputs)
         shape = get_output_shape(self.d_in)
         c = - 0.5 * math.log(2*math.pi)
@@ -118,98 +97,230 @@ class ladder_step():
 
 class resnet_step(ladder_step):
 
-    def __init__(self, n_filters_in=3, n_filters=[32, 64, 128], latent_dim=256, resnet_per_stage=2, prefilter=True):
+    def __init__(self, n_filters=32, latent_dim=8, downsample=False, prefilter=False):
         """
         Initialise the step
         """
         self.noise_std=0.01
         self.n_filters = n_filters
-        self.resnet_per_stage = resnet_per_stage
         self.latent_dim = latent_dim
         self.prefilter = prefilter
-        self.n_filters_in = n_filters_in
+        self.latent_dim = latent_dim
+        self.downsample = downsample
 
+    def connect_upward(self, d, y):
+        he_norm = HeNormal(gain='relu')
+        self.d_in = d
+        
+        # Get the dimension of the input and check if downsampling is requested 
+        self.n_filters_in =  d.output_shape[1]    
+        stride = 2 if self.downsample else 1
 
-    def bottom_up(self, input_layer, y):
-        """
-        Compute bottom up pass
-        """
-        input_dim = get_output_shape(input_layer)[1]
-
+        # If the input needs to be reshaped in any way we do it first
         if self.prefilter:
-            network = Conv2DLayer(input_layer, num_filters=self.n_filters[0], filter_size=1, pad='same', stride=1, nonlinearity=None, W=GlorotUniform())
+            input_net = batch_norm(Conv2DLayer(d, num_filters=self.n_filters, filter_size=5, stride=stride, nonlinearity=elu, pad='same', W=he_norm))
+            branch = input_net
+        elif self.n_filters_in != self.n_filters or self.downsample:
+            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+            branch = input_net
         else:
-            network = input_layer
+            input_net = d
+            branch = BatchNormLayer(d)
+            branch = NonlinearityLayer(branch, elu)
 
-        for i in range(self.resnet_per_stage):
-            network = preactivation_resnet(network, n_out_filters=self.n_filters[0], filter_size=3)
+        #
+        # Main branch
+        #
+        branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=1, nonlinearity=identity, pad='same', W=he_norm)
+        
+        branch_posterior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
+        
+        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=stride, nonlinearity=identity, pad='same', W=he_norm)
 
-        for n_filter in self.n_filters[1:]:
-            network = preactivation_resnet(network, n_out_filters=n_filter, filter_size=3, downsample=True)
-            for i in range(self.resnet_per_stage):
-                network = preactivation_resnet(network, n_out_filters=n_filter, filter_size=3)
+        #
+        # Shortcut branch
+        #
+        if self.n_filters_in != self.n_filters or self.downsample:
+            shortcut = Conv2DLayer(input_net, num_filters=self.n_filters, filter_size=1, nonlinearity=None, pad='same', stride=stride, W=he_norm)
+        else:
+            shortcut = input_net
 
-        # Creating mu and sigma layers
-        mu = Conv2DLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform())
-        logvar = ClampLogVarLayer(Conv2DLayer(network, num_filters=self.latent_dim, filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform()))
-        samp = GaussianSampleLayer(mean=mu, log_var=logvar)
+        self.bottom_up_net = ElemwiseSumLayer([branch, shortcut])
+        
+        
+        # Encoding the posterior
+        self.d_mu = Conv2DLayer(branch_posterior, num_filters=self.latent_dim,
+                                filter_size=1, nonlinearity=None, pad='same',
+                                W=GlorotUniform())
+        self.d_logvar = ClampLogVarLayer(Conv2DLayer(branch_posterior,
+                                                     num_filters=self.latent_dim,
+                                                     filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform()))
+        self.d_smpl = GaussianSampleLayer(mean=self.d_mu, log_var=self.d_logvar)
 
-        return mu, logvar, samp
+        return self.bottom_up_net
 
-    def top_down(self, input_layer, y):
-        """
-        Compute top down pass
-        """
-        input_dim = get_output_shape(input_layer)[1]
 
-        network = input_layer
+    def connect_downward(self, p, y):
+        he_norm = HeNormal(gain='relu')
+        
+        # Get the dimension of the input and check if downsampling is requested 
+        n_x =  p.output_shape[-1]    
+        stride = 2 if self.downsample else 1
 
-        for i in range(self.resnet_per_stage):
-            network = transposed_preactivation_resnet(network, n_out_filters=self.n_filters[-1], filter_size=3)
+        # If the input needs to be reshaped in any way we do it first
+        if self.n_filters_in != self.n_filters or self.downsample:
+            input_net = NonlinearityLayer(BatchNormLayer(p), elu)
+            branch = input_net
+        else:
+            input_net = p
+            branch = BatchNormLayer(p)
+            branch = NonlinearityLayer(branch, elu)
 
-        for n_filter in self.n_filters[::-1][1:]:
-            network = transposed_preactivation_resnet(network, n_out_filters=n_filter, filter_size=3, upsample=True)
-            for i in range(self.resnet_per_stage):
-                network = transposed_preactivation_resnet(network, n_out_filters=n_filter, filter_size=3)
 
-        # Computing
-        mu = Conv2DLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform())
-        logvar = ClampLogVarLayer(Conv2DLayer(network, num_filters=self.n_filters_in, filter_size=1, stride=1,pad='same', nonlinearity=None, W=GlorotUniform()))
-        smpl = GaussianSampleLayer(mean=mu, log_var=logvar)
-        return mu, logvar, smpl
+        #
+        # Inference branch
+        #
+        if self.downsample :
+            branch_posterior = TransposedConv2DLayer(branch,
+                                                    num_filters=self.latent_dim,
+                                                    filter_size=3, 
+                                                    stride=stride, nonlinearity=identity,
+                                                    crop='same',
+                                                    output_size=n_x*2,W=he_norm)
+        else:
+            branch_posterior = Conv2DLayer(branch,
+                                           num_filters=self.latent_dim,
+                                           filter_size=3, 
+                                           stride=stride,
+                                           nonlinearity=identity,
+                                           pad='same',
+                                           W=he_norm)
+            
+        tz_mu = Conv2DLayer(branch_posterior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm)
+        tz_logvar = ClampLogVarLayer(Conv2DLayer(branch_posterior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm))
+
+        # Combine top-down inference information
+        self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, tz_mu, tz_logvar)
+        self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
+        self.qz_smpl = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar)
+
+
+        #
+        # Main branch
+        # 
+        if self.downsample :
+            branch = TransposedConv2DLayer(branch,
+                                            num_filters=self.n_filters,
+                                            filter_size=3,
+                                            stride=stride, nonlinearity=identity,
+                                            crop='same',
+                                            output_size=n_x*2,W=he_norm)
+        else:
+            branch = Conv2DLayer(branch,
+                                num_filters=self.n_filters,
+                                filter_size=3, 
+                                stride=stride,
+                                nonlinearity=identity,
+                                pad='same',
+                                W=he_norm)
+
+        branch_prior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
+        branch = SliceLayer(branch, indices=slice(0,-self.latent_dim), axis=1)
+
+        # Merge samples from the posterior into the main branch
+        branch = ConcatLayer([branch, self.qz_smpl])
+
+        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = Conv2DLayer(branch,
+                             num_filters=self.n_filters_in,
+                             filter_size=3, 
+                             stride=1,
+                             nonlinearity=identity,
+                             pad='same',
+                             W=he_norm)
+
+        # Define step prior
+        self.pz_mu = Conv2DLayer(branch_prior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm)
+        self.pz_logvar = ClampLogVarLayer(Conv2DLayer(branch_prior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm))
+        self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
+        
+        if self.n_filters_in != self.n_filters or self.downsample:
+            shortcut = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=1, nonlinearity=None,  stride=stride, W=he_norm, crop='same',
+            output_size=n_x*(2 if self.downsample else 1))
+        else:
+            shortcut = input_net
+        
+        net = ElemwiseSumLayer([branch, shortcut])
+        
+        if self.prefilter:
+            net = Conv2DLayer(net, num_filters=self.n_filters_in, filter_size=5, stride=1, nonlinearity=elu, pad='same', W=he_norm)
+            
+        self.top_down_net = net
+        return self.top_down_net
+
 
 class dens_step(ladder_step):
 
-    def __init__(self, n_out, n_units=[128, 128], nonlinearity=elu):
+    def __init__(self, latent_dim=16, n_units=128, nonlinearity=elu):
         """
 
         """
-        self.output_shape = n_out
         self.n_units = n_units
+        self.latent_dim = latent_dim
         self.nonlinearity = nonlinearity
-
-    def bottom_up(self, input_layer, y):
-        """
-        Copmute bottom up pass through a dense layer
-        """
+    
+    def connect_upward(self, d, y):
+        he_norm = HeNormal(gain='relu')
         
         # Saves the input layer shape for latter
-        self.input_shape = get_output_shape(input_layer)
+        self.input_shape = get_output_shape(d)
+        self.d_in = d
         
         # Concatenate the two input layers
-        network = ConcatLayer([FlattenLayer(input_layer), y])
+        input_net  = FlattenLayer(d)
+        self.n_units_in = get_output_shape(input_net)[-1]
+        
+        if self.n_units != self.n_units_in:
+            input_net = NonlinearityLayer(BatchNormLayer(input_net), elu)
+            branch = ConcatLayer([input_net, y])
+        else:
+            branch = NonlinearityLayer(BatchNormLayer(input_net), elu)
+            branch = ConcatLayer([branch, y])
 
-        for i in range(len(self.n_units)):
-            network = batch_norm(DenseLayer(network, num_units=self.n_units[i],
-                                          nonlinearity=self.nonlinearity,
-                                          W=GlorotUniform(),
-                                          name="rec_%d" % i))
+        #
+        # Main branch
+        #
+        branch = DenseLayer(branch, num_units=self.n_units,
+                                    nonlinearity=identity,
+                                    W=he_norm)
 
-        mu = DenseLayer(network, num_units=self.output_shape, nonlinearity=identity)
-        logvar = ClampLogVarLayer(DenseLayer(network, num_units=self.output_shape, nonlinearity=identity))
-        smpl = GaussianSampleLayer(mean=mu, log_var=logvar, name='z')
+        branch_posterior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
+        
+        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = DenseLayer(branch, num_units=self.n_units,
+                                    nonlinearity=identity,
+                                    W=he_norm)
 
-        return mu, logvar, smpl
+        #
+        # Shortcut branch
+        #
+        if self.n_units != self.n_units_in:
+            shortcut = DenseLayer(branch, num_units=self.n_units,
+                                    nonlinearity=identity,
+                                    W=he_norm)
+        else:
+            shortcut = input_net
+
+        self.bottom_up_net = ElemwiseSumLayer([branch, shortcut])
+        
+        # Encoding the posterior
+        self.d_mu = DenseLayer(branch_posterior, num_units=self.latent_dim,nonlinearity=None, W=GlorotUniform())
+        self.d_logvar = ClampLogVarLayer(DenseLayer(branch_posterior, num_units=self.latent_dim,nonlinearity=None, W=GlorotUniform()))
+        self.d_smpl = GaussianSampleLayer(mean=self.d_mu, log_var=self.d_logvar)
+
+        return self.bottom_up_net
+
 
     def top_down(self, input_layer, y):
         """
@@ -231,3 +342,59 @@ class dens_step(ladder_step):
         smpl = GaussianSampleLayer(mean=mu, log_var=logvar, name='z')
 
         return mu, logvar, smpl
+
+
+    def connect_downward(self, p, y):
+        he_norm = HeNormal(gain='relu')
+
+        # If the input needs to be reshaped in any way we do it first
+        if self.n_units != self.n_units_in:
+            input_net = NonlinearityLayer(BatchNormLayer(p), elu)
+            branch = ConcatLayer([FlattenLayer(input_net), y])
+        else:
+            input_net = p
+            branch =  NonlinearityLayer(BatchNormLayer(p), elu)
+            branch =  ConcatLayer([FlattenLayer(branch), y])
+
+
+        #
+        # Inference branch
+        #
+        branch_posterior = DenseLayer(branch, num_units=self.latent_dim, nonlinearity=identity, W=he_norm)
+        tz_mu = DenseLayer(branch_posterior, num_units=self.latent_dim, nonlinearity=None, W=he_norm)
+        tz_logvar = ClampLogVarLayer(DenseLayer(branch_posterior, num_units=self.latent_dim, nonlinearity=None, W=he_norm))
+
+        # Combine top-down inference information
+        self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, tz_mu, tz_logvar)
+        self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
+        self.qz_smpl = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar)
+
+
+        #
+        # Main branch
+        # 
+        branch = DenseLayer(branch, num_units=self.n_units_in, nonlinearity=identity, W=he_norm)
+
+        branch_prior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
+        branch = SliceLayer(branch, indices=slice(0,-self.latent_dim), axis=1)
+
+        # Merge samples from the posterior into the main branch
+        branch = ConcatLayer([branch, self.qz_smpl])
+
+        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = DenseLayer(branch, num_units=self.n_units_in, nonlinearity=identity, W=he_norm)
+
+        # Define step prior
+        self.pz_mu = DenseLayer(branch_prior, num_units=self.latent_dim, nonlinearity=identity, W=he_norm)
+        self.pz_logvar = ClampLogVarLayer(DenseLayer(branch_prior, num_units=self.latent_dim, nonlinearity=identity, W=he_norm))
+        self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
+        
+        if self.n_units != self.n_units_in:
+            shortcut = DenseLayer(input_net, num_units=self.n_units_in, nonlinearity=None, W=he_norm)
+        else:
+            shortcut = input_net
+        
+        net = ElemwiseSumLayer([branch, shortcut])
+        
+        self.top_down_net = ReshapeLayer(net,  shape=self.input_shape)
+        return self.top_down_net

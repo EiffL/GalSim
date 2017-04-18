@@ -65,8 +65,9 @@ class gmm_prior(ladder_prior):
         self._l_input = input_conditional_layer
         self.batch_size = get_output_shape(input_conditional_layer)[0]
 
+        network = self._l_input
         for i in range(len(self.n_units)):
-            network = DenseLayer(self._l_input , num_units=self.n_units[i],
+            network = DenseLayer(network, num_units=self.n_units[i],
                                           nonlinearity=self.nonlinearity,
                                           W=GlorotUniform(),
                                           name="prior_%d" % i)

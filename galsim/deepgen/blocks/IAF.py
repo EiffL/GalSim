@@ -35,12 +35,16 @@ class MergeIAFLayer(lasagne.layers.MergeLayer):
         sigma = T.exp(0.5*log_var)
         return z * sigma + (1 - sigma) * m
 
-def MADE_IAF(mu, log_var, hidden_sizes, inputs):
+def MADE_IAF(input_net, hidden_sizes, inputs):
     """
     Block defining an IAF scheme based on multi-layer MADE transforms
 
     Returns the IAF code z, and the scalar value of log(q(z | x))
     """
+    
+    num_units = get_output_shape(input_net)[-1]
+    mu = DenseLayer(input_net, num_units=num_units, nonlinearity=None)
+    log_var= ClampLogVarLayer(DenseLayer(input_net, num_units=num_units, nonlinearity=None))
 
     # Sample from the Gaussian distribution
     z0 = GaussianSampleLayer(mean=mu, log_var=log_var, name='z0_sample')

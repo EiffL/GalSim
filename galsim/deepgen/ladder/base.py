@@ -71,23 +71,20 @@ class ladder(object):
             print("bottom-up", get_output_shape(d_mu))
 
         # Use an IAF parametrisation for the code
-        self.code_layer, self.logqz = MADE_IAF(self.steps[-1].d_mu,
-                                               self.steps[-1].d_logvar,
+        self.code_layer, self.logqz = MADE_IAF(d_mu,
                                                self.hidden_sizes,
                                                self.inputs)
 
         # Connect the probabilistic downward pass
         qz_smpl = self.code_layer
-        pz_smpl = self.code_layer
+        p = self.code_layer
 
         for i, s in enumerate(self.steps[::-1]):
-            if i == 0:
-                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, self.l_y, qz_smpl=qz_smpl)
-            else:
-                pz_smpl, qz_mu, qz_logvar = s.connect_downward(pz_smpl, self.l_y, tz_mu=qz_mu, tz_logvar=qz_logvar)
-            print("top-down", get_output_shape(pz_smpl))
+            p = s.connect_downward(p, self.l_y)
+            print("top-down", get_output_shape(p))
+            
         # Changing output layer to the mean, for a Gaussian model where the noise is known
-        self.output_layer = self.steps[0].p_mu
+        self.output_layer = p
 
         # Connect prior network
         self.prior_layer = self.prior.connect(self.l_y)
@@ -98,8 +95,8 @@ class ladder(object):
 
         # KL divergence of each steps
         kl_steps = []
-        for s1, s2 in zip(self.steps[:-1], self.steps[1:]):
-            kl_steps.append(s1.kl_normal(self.inputs, s2))
+        for s in self.steps:
+            kl_steps.append(s.kl_normal(self.inputs))
 
         # Finally, cost function of the reconstruction error
         log_px = self.steps[0].log_likelihood(self.inputs)
@@ -112,18 +109,10 @@ class ladder(object):
         # Averaging over mini-batch
         LL = LL.mean()
 
-        # Adding l2 regularization
-        #LL = LL + regularize_network_params(self.prior_layer, l2) * l2_reg
-
         # Get trainable parameters and generate updates
-        params = get_all_params([self.output_layer,
-                                 self.steps[0].qz_smpl,
-                                 self.prior_layer],
-                                trainable=True)
+        params = get_all_params([self.output_layer, self.prior_layer, self.code_layer] + [s.pz_smpl for s in self.steps], trainable=True)
 
         grads = T.grad(LL, params)
-        #max_norm = 1.
-        #mgrads = total_norm_constraint(grads, max_norm=max_norm)
         clip_grad = 10.
         cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
         updates = adam(cgrads, params, learning_rate=self._lr)
@@ -139,15 +128,11 @@ class ladder(object):
         self._prior_sampler = theano.function([self._y], pz_smpl)
 
         # Get outputs from the generative network
-        x_smpl = get_output(self.output_layer, inputs={self.code_layer: self._z,
-                                                       self.l_y: self._y},
+        ins = {self.code_layer: self._z, self.l_y: self._y}
+        for s in self.steps[::-1]:
+            ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
+        x_smpl = get_output(self.output_layer, inputs=ins,
                             deterministic=True)
         self._output_sampler = theano.function([self._z, self._y], x_smpl)
-
-        # Get outputs from the generative network mean
-        x_smpl_mean = get_output(self.steps[0].p_mu, inputs={self.code_layer: self._z,
-                                                             self.l_y: self._y}, deterministic=True)
-        self._output_sampler_mean = theano.function([self._z, self._y], x_smpl_mean)
-
 
 
