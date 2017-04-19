@@ -7,7 +7,7 @@ import theano.tensor as T
 from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer
 from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
-
+from lasagne.utils import floatX
 from ..blocks.IAF import MADE_IAF
 
 
@@ -15,6 +15,7 @@ class ladder(object):
 
     def __init__(self, n_c, n_x, n_y,
                  steps, prior,
+                 code_size=2,
                  batch_size=32,
                  IAF_size=[[128,128], [128,128]],
                  learning_rate=0.001,
@@ -42,6 +43,7 @@ class ladder(object):
         self.n_x = n_x
         self.n_y = n_y
         self.l2_reg = l2_reg
+        self.code_size = code_size
         
         # Input variable
         self._x = T.tensor4('x')
@@ -72,6 +74,7 @@ class ladder(object):
 
         # Use an IAF parametrisation for the code
         self.code_layer, self.logqz = MADE_IAF(d_mu,
+                                               self.code_size,
                                                self.hidden_sizes,
                                                self.inputs)
 
@@ -110,7 +113,7 @@ class ladder(object):
         LL = LL.mean()
 
         # Get trainable parameters and generate updates
-        params = get_all_params([self.output_layer, self.prior_layer, self.code_layer] + [s.pz_smpl for s in self.steps], trainable=True)
+        params = get_all_params([self.output_layer, self.prior_layer, self.code_layer]+ [s.pz_smpl for s in self.steps], trainable=True)
 
         grads = T.grad(LL, params)
         clip_grad = 10.
@@ -130,9 +133,189 @@ class ladder(object):
         # Get outputs from the generative network
         ins = {self.code_layer: self._z, self.l_y: self._y}
         for s in self.steps[::-1]:
-            ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
+            if s.qz_smpl is not None:
+                ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
         x_smpl = get_output(self.output_layer, inputs=ins,
                             deterministic=True)
         self._output_sampler = theano.function([self._z, self._y], x_smpl)
+    
+    def transform(self, X, y):
+        """
+        Transforms the data into latent code.
 
+        Parameters
+        ----------
+        X: array_like of shape (n_samples, n_features)
+            The data to be transformed.
 
+        y: array_like (n_samples, n_conditional_features)
+            Conditional data.
+
+        Returns
+        -------
+        h: array of shape (n_samples, n_hidden)
+            Latent representation of the data.
+        """
+
+        res = []
+        nsamples  = X.shape[0]
+
+        # Process data using batches, for optimisation and memory constraints
+        for i in range(int(nsamples/self.batch_size)):
+            z = self._code_sampler(floatX(X[i*self.batch_size:(i+1)*self.batch_size]),
+                                   floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            res.append(z)
+
+        if nsamples % (self.batch_size) > 0 :
+            i = int(nsamples/self.batch_size)
+            ni = nsamples % (self.batch_size)
+            xdata = np.zeros((self.batch_size,) + X.shape[1:])
+            xdata[:ni] = X[i*self.batch_size:]
+            ydata = np.zeros((self.batch_size, y.shape[1]))
+            ydata[:ni] = y[i*self.batch_size:]
+            z = self._code_sampler(floatX(xdata), floatX(ydata))
+
+            res.append(z[:ni])
+
+        # Concatenate processed data
+        z = np.concatenate(res)
+        return z
+
+    def inverse_transform(self, h, y):
+        """
+        Decodes a latent code.
+
+        Parameters
+        ----------
+        h: array_like of shape (n_samples, n_hidden)
+            Latent code
+
+        Y: array_like of shape (n_samples, n_conditional_features)
+            Conditional variables that conditioned the code
+
+        mean: boolean, optional
+            If True, returns the mean of the output distribution, otherwise
+            returns a sample from this distribution. (default: False)
+
+        Returns
+        -------
+        X: array, of shape (n_samples, n_features)
+            Reconstruction
+        """
+
+        res = []
+        n_samples  = h.shape[0]
+        
+        #if mean:
+        #sampler = self._output_mean
+        #else:
+        sampler = self._output_sampler
+
+        # Process data using batches, for optimisation and memory constraints
+        for i in range(int(n_samples/self.batch_size)):
+            if y is not None:
+                X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
+                            floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            else:
+                X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]))
+            res.append(X)
+
+        if n_samples % (self.batch_size) > 0 :
+            i = int(n_samples/self.batch_size)
+            ni = n_samples % (self.batch_size)
+            hdata = np.zeros((self.batch_size, h.shape[1]))
+            hdata[:ni] = h[i*self.batch_size:]
+            
+            if y is None:
+                X = sampler(floatX(hdata))
+            else:
+                ydata = np.zeros((self.batch_size, y.shape[1]))
+                ydata[:ni] = y[i*self.batch_size:]
+                X = sampler(floatX(hdata),  floatX(ydata))
+                
+            res.append(X[:ni])
+
+        # Concatenate processed data
+        X = np.concatenate(res)
+        return X
+
+    def sample_prior(self, y=None, n_samples=None):
+        """
+        Draws samples from the prior distribution conditioned by y.
+
+        Parameters
+        ----------
+        y: array, of shape (n_samples, n_conditional_features)
+            Conditional variable used by the prior.
+
+        n_samples: int
+            Number of samples to draw.
+
+        Returns
+        -------
+        h: array, of shape (n_samples, n_hidden)
+            Randomly drawn code samples.
+        """
+        check_is_fitted(self, "_network")
+
+        res = []
+        if n_samples is not None:
+            if y is None:
+                nsamples = n_samples
+            else:
+                nsamples = min([y.shape[0], n_samples])
+        else:
+            if y is None:
+                nsamples = 1
+            else:
+                nsamples = y.shape[0]
+
+        # Process data using batches, for optimisation and memory constraints
+        for i in range(int(nsamples/self.batch_size)):
+            if y is not None:
+                z = self._prior_sampler(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            else:
+                z = self._prior_sampler()
+            res.append(z)
+
+        if nsamples % (self.batch_size) > 0 :
+            i = int(nsamples/self.batch_size)
+            ni = nsamples % (self.batch_size)
+            if y is not None:
+                ydata = np.zeros((self.batch_size, y.shape[1]))
+                ydata[:ni] = y[i*self.batch_size:]
+                z = self._prior_sampler(floatX(ydata))
+            else:
+                z = self._prior_sampler()
+            res.append(z[:ni])
+
+        # Concatenate processed data
+        z = np.concatenate(res)
+        return z
+
+    def sample(self, y=None, n_samples=None, mean=False):
+        """
+        Draws new samples from the generative network and the prior distribution, conditioned
+        on variable y.
+
+        Parameters
+        ----------
+        y: array, of shape (n_samples, n_conditional_features)
+            Conditional variable used by the prior.
+            
+        n_samples: int, optional
+            Number of samples to draw.
+    
+        mean: boolean, optional
+            If True, returns the mean of the output distribution, otherwise
+            returns a sample from this distribution. (default: False)
+
+        Returns
+        -------
+        X: array, of shape (n_samples, n_features)
+            Randomly drawn samples.
+        """
+        check_is_fitted(self, "_network")
+
+        h = self.sample_prior(y=y, n_samples=n_samples)
+        return self.inverse_transform(h, y, mean=mean)
