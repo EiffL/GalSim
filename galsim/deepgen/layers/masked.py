@@ -158,12 +158,12 @@ class ARConv2DLayer(BaseConvLayer):
     """
     
     def __init__(self, incoming, num_filters, filter_size, stride=(1, 1),
-                 pad=0, W=init.GlorotUniform(),
+                 pad=0, W=init.GlorotUniform(), b=init.Constant(0.), untie_biases=False,
                  nonlinearity=nonlinearities.rectify, flip_filters=True, zerodiagonal=True,  flipmask=False,
                  convolution=T.nnet.conv2d, **kwargs):
         super(ARConv2DLayer, self).__init__(incoming, num_filters, filter_size,
                                           stride, pad,  W=W,
-                                          nonlinearity=nonlinearity, flip_filters=flip_filters, n=2, b=None, untie_biases=False,
+                                          nonlinearity=nonlinearity, flip_filters=flip_filters, n=2, b=b, untie_biases=untie_biases,
                                           **kwargs)
         self.convolution = convolution
         

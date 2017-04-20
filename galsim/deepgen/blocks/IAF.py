@@ -5,8 +5,9 @@ from lasagne.layers import batch_norm, ElemwiseSumLayer
 from lasagne.layers import NonlinearityLayer, DenseLayer, ConcatLayer
 from lasagne.layers import get_output, get_output_shape
 from lasagne.nonlinearities import elu, rectify, sigmoid, tanh, identity
-from lasagne.layers import BatchNormLayer, NonlinearityLayer
+from lasagne.layers import BatchNormLayer, NonlinearityLayer, SliceLayer
 
+from ..layers.masked import ARConv2DLayer
 from ..layers.transform import ClampLogVarLayer, ScaleShiftLayer
 
 from .MADE import MADE
@@ -71,3 +72,38 @@ def MADE_IAF(input_net, code_size, hidden_sizes, inputs, apply_nonlinearity=Fals
         #l = l - T.sum(0.5*s, axis=-1)
 
     return z, l
+
+
+def ConvAR_IAF(mu, log_var, hidden_sizes, inputs, filter_size=3, nonlinearity=elu):
+    """
+    Block defining an IAF scheme based on a 2d masked convolution
+
+    Returns the IAF code z, and the scalar value of log(q(z | x))
+    """
+    
+    latent_dim = get_output_shape(mu)[1]
+    
+    # Sample from the Gaussian distribution
+    z0 = GaussianSampleLayer(mean=mu, log_var=log_var, name='z0_sample')
+    
+    # Initializes the value of log(q(z | x))
+    m, ls, eps = get_output([mu, log_var, z0], inputs=inputs)
+    l = - 0.5 * T.sum( ls + (eps - m)**2 / ( T.exp(ls) +1e-5)  + math.log(2. * math.pi), axis=[1,2,3])
+
+    z = z0
+    
+    # Add the Autoregressive layers
+    for i,h_size in enumerate(hidden_sizes):
+        flipmask = ((i % 2) == 1)
+        m = z
+        for j in h_size:
+            m = ARConv2DLayer(m, num_filters=j, filter_size=filter_size, pad='same', nonlinearity=nonlinearity,flipmask=flipmask)
+        m = ARConv2DLayer(m, num_filters=latent_dim, filter_size=filter_size, pad='same', nonlinearity=identity,flipmask=flipmask)
+        
+        # Only parametrising the mean, following recommendations from Kingma
+        z = ElemwiseSumLayer([z, m])
+        
+        # In that case, logq remains unchanged
+    
+    return z, l
+
