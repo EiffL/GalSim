@@ -138,7 +138,7 @@ class resnet_step(ladder_step):
         branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=1, nonlinearity=identity, pad='same', W=he_norm)
         
         if self.latent_dim > 0:
-            branch_posterior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
+            branch_posterior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
         
         branch = NonlinearityLayer(BatchNormLayer(branch), elu)
         branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=stride, nonlinearity=identity, pad='same', W=he_norm)
@@ -155,12 +155,10 @@ class resnet_step(ladder_step):
         
         if self.latent_dim > 0:
             # Encoding the posterior
-            self.d_mu = Conv2DLayer(branch_posterior, num_filters=self.latent_dim,
-                                    filter_size=1, nonlinearity=None, pad='same',
-                                    W=GlorotUniform())
-            self.d_logvar = ClampLogVarLayer(Conv2DLayer(branch_posterior,
-                                                        num_filters=self.latent_dim,
-                                                        filter_size=1, nonlinearity=None, pad='same', W=GlorotUniform()))
+            self.d_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
+            self.d_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(-self.latent_dim, None), axis=1))
+            print(get_output_shape(self.d_mu))
+            print(get_output_shape(self.d_logvar))
             self.d_smpl = GaussianSampleLayer(mean=self.d_mu, log_var=self.d_logvar)
 
         return self.bottom_up_net
@@ -187,22 +185,21 @@ class resnet_step(ladder_step):
             #
             if self.downsample :
                 branch_posterior = TransposedConv2DLayer(branch,
-                                                        num_filters=self.latent_dim,
+                                                        num_filters=2*self.latent_dim,
                                                         filter_size=3, 
                                                         stride=stride, nonlinearity=identity,
                                                         crop='same',
                                                         output_size=self.n_x,W=he_norm)
             else:
                 branch_posterior = Conv2DLayer(branch,
-                                            num_filters=self.latent_dim,
+                                            num_filters=2*self.latent_dim,
                                             filter_size=3, 
                                             stride=stride,
                                             nonlinearity=identity,
                                             pad='same',
                                             W=he_norm)
-                
-            tz_mu = Conv2DLayer(branch_posterior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm)
-            tz_logvar = ClampLogVarLayer(Conv2DLayer(branch_posterior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm))
+            tz_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
+            tz_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(-self.latent_dim, None), axis=1))
 
             # Combine top-down inference information
             self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, tz_mu, tz_logvar)
@@ -217,14 +214,14 @@ class resnet_step(ladder_step):
         # 
         if self.downsample :
             branch = TransposedConv2DLayer(branch,
-                                            num_filters=self.n_filters,
+                                            num_filters=self.n_filters+self.latent_dim,
                                             filter_size=3,
                                             stride=stride, nonlinearity=identity,
                                             crop='same',
                                             output_size=self.n_x,W=he_norm)
         else:
             branch = Conv2DLayer(branch,
-                                num_filters=self.n_filters,
+                                num_filters=self.n_filters+self.latent_dim,
                                 filter_size=3, 
                                 stride=stride,
                                 nonlinearity=identity,
@@ -232,8 +229,8 @@ class resnet_step(ladder_step):
                                 W=he_norm)
         if self.latent_dim > 0:
             print(get_output_shape(branch))
-            branch_prior = SliceLayer(branch, indices=slice(-self.latent_dim, None), axis=1)
-            branch = SliceLayer(branch, indices=slice(0,-self.latent_dim), axis=1)
+            branch_prior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
+            branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             print(get_output_shape(branch_prior))
             print(get_output_shape(branch))
             ## Merge samples from the posterior into the main branch
@@ -251,8 +248,8 @@ class resnet_step(ladder_step):
 
         if self.latent_dim > 0:
             # Define step prior
-            self.pz_mu = Conv2DLayer(branch_prior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm)
-            self.pz_logvar = ClampLogVarLayer(Conv2DLayer(branch_prior, num_filters=self.latent_dim, filter_size=1, stride=1,pad='same', nonlinearity=None, W=he_norm))
+            self.pz_mu = SliceLayer(branch_prior, indices=slice(0,self.latent_dim), axis=1)
+            self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
             self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
         else:
             self.pz_smpl = None

@@ -107,7 +107,7 @@ class ladder(object):
         # Total cost function
         LL = kl_prior - log_px
         for kl in kl_steps:
-            LL += kl
+            LL += kl # *100.
 
         # Averaging over mini-batch
         LL = LL.mean()

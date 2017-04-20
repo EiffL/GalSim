@@ -11,9 +11,13 @@ from theano.tensor.shared_randomstreams import RandomStreams
 
 import lasagne
 import lasagne.layers
+import lasagne.init as init
+import lasagne.nonlinearities as nonlinearities
 from lasagne.layers import get_output_shape
 from lasagne.layers import SliceLayer, batch_norm, ElemwiseSumLayer, NonlinearityLayer
 from lasagne.layers import DenseLayer
+from lasagne.layers.conv import BaseConvLayer
+from lasagne.utils import floatX
 
 class MaskGenerator(object):
 
@@ -146,3 +150,66 @@ class MaskedLayer(DenseLayer):
         if self.b is not None:
             activation = activation + self.b
         return self.nonlinearity(activation)
+
+
+class ARConv2DLayer(BaseConvLayer):
+    """
+    Layer implementing a masked autoregressive convolution
+    """
+    
+    def __init__(self, incoming, num_filters, filter_size, stride=(1, 1),
+                 pad=0, W=init.GlorotUniform(),
+                 nonlinearity=nonlinearities.rectify, flip_filters=True, zerodiagonal=True,  flipmask=False,
+                 convolution=T.nnet.conv2d, **kwargs):
+        super(ARConv2DLayer, self).__init__(incoming, num_filters, filter_size,
+                                          stride, pad,  W=W,
+                                          nonlinearity=nonlinearity, flip_filters=flip_filters, n=2, b=None, untie_biases=False,
+                                          **kwargs)
+        self.convolution = convolution
+        
+        w_shape = self.get_W_shape()
+        
+        # Create the convolution mask
+        self.weights_mask = self.add_param(lasagne.init.Constant(1.),
+                                           shape = w_shape,
+                                           name='weights_mask',
+                                           trainable=False,
+                                           regularizable=False)
+        # Initialise the mask
+        # Adapted from https://github.com/openai/iaf/blob/master/graphy/nodes/ar.py
+        l = w_shape[2] // 2 
+        m = w_shape[3] // 2 
+        self.weights_mask = T.set_subtensor(self.weights_mask[:,:,:l,:], floatX(0.0))
+        self.weights_mask = T.set_subtensor(self.weights_mask[:,:,l,:m], floatX(0.0))
+        n_out = w_shape[0]
+        n_in = w_shape[1]
+        
+        if n_out >= n_in:
+            assert n_out%n_in == 0
+            k = n_out / n_in
+            for i in range(n_in):
+                self.weights_mask = T.set_subtensor(self.weights_mask[i*k:(i+1)*k,i+1:,l,m], floatX(0.0))
+                if zerodiagonal:
+                   self.weights_mask = T.set_subtensor(self.weights_mask[i*k:(i+1)*k,i:i+1,l,m],  floatX(0.0))
+        else:
+            assert n_in%n_out == 0
+            k = n_in / n_out
+            for i in range(n_out):
+                self.weights_mask = T.set_subtensor(self.weights_mask[i:i+1,(i+1)*k:,l,m], floatX(0.0))
+                if zerodiagonal:
+                   self.weights_mask = T.set_subtensor(self.weights_mask[i:i+1,i*k:(i+1)*k:,l,m], floatX(0.0))
+        if flipmask:
+           self.weights_mask = self.weights_mask[::-1,::-1,::-1,::-1]
+            
+        # TODO: Renormalise the initial weights after masking...
+
+
+    def convolve(self, input, **kwargs):
+        border_mode = 'half' if self.pad == 'same' else self.pad
+        conved = self.convolution(input, self.W * self.weights_mask,
+                                  self.input_shape, self.get_W_shape(),
+                                  subsample=self.stride,
+                                  border_mode=border_mode,
+                                  filter_flip=self.flip_filters)
+        return conved
+    

@@ -32,7 +32,8 @@ from deepgen import ladder, gmm_prior, resnet_step, dens_step
 from numpy.random import randn, randint
 from lasagne.utils import floatX
 
-class LadderVAE(GenerativeGalaxyModel):
+
+class ResNetVAE(GenerativeGalaxyModel):
     """
     Generative galaxy model based on a Ladder Variational AutoEncoder
     """
