@@ -4,22 +4,21 @@ sys.setrecursionlimit(10000)
 import theano
 import theano.tensor as T
 
+import numpy as np
+
 from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer
 from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
 from lasagne.utils import floatX
-from ..blocks.IAF import MADE_IAF
 
 
 class ladder(object):
 
     def __init__(self, n_c, n_x, n_y,
-                 steps, prior,
-                 code_size=2,
+                 steps,
                  batch_size=32,
-                 IAF_size=[[128,128], [128,128]],
-                 learning_rate=0.001,
-                 l2_reg=1e-4):
+                 noise_std=1,
+                 learning_rate=0.001):
         """
         Initialises the ladder structure
 
@@ -27,23 +26,13 @@ class ladder(object):
         ----------
         steps: list of ladder_steps
             List of steps for the ladder in bottom up order
-
-        prior: ladder_prior
-            Prior object to use at the top level of the ladder
-
-        inputs: dict
-            Dictionnary of the input layer and variables
         """
         self.steps = steps
-        self.prior = prior
         self.learning_rate = learning_rate
-        self.hidden_sizes = IAF_size
         self.batch_size = batch_size
         self.n_c = n_c
         self.n_x = n_x
         self.n_y = n_y
-        self.l2_reg = l2_reg
-        self.code_size = code_size
         
         # Input variable
         self._x = T.tensor4('x')
@@ -53,7 +42,6 @@ class ladder(object):
         self._z = T.matrix('z')
         # Variable for the learning rate
         self._lr = T.scalar('lr')
-        
         
         self.l_x = InputLayer(shape=(self.batch_size, self.n_c,
                                      self.n_x, self.n_x),
@@ -72,72 +60,78 @@ class ladder(object):
             d_mu = s.connect_upward(d_mu, self.l_y)
             print("bottom-up", get_output_shape(d_mu))
 
-        # Use an IAF parametrisation for the code
-        self.code_layer, self.logqz = MADE_IAF(d_mu,
-                                               self.code_size,
-                                               self.hidden_sizes,
-                                               self.inputs)
+        # The last step of the ladder should be the posterior/prior element
+        self.code_layer = d_mu
 
         # Connect the probabilistic downward pass
-        qz_smpl = self.code_layer
         p = self.code_layer
-
         for i, s in enumerate(self.steps[::-1]):
             p = s.connect_downward(p, self.l_y)
             print("top-down", get_output_shape(p))
             
-        # Changing output layer to the mean, for a Gaussian model where the noise is known
+        # Output of the ladder
         self.output_layer = p
 
-        # Connect prior network
-        self.prior_layer = self.prior.connect(self.l_y)
-
+        # Reconstruction error
+        log_px = self.steps[0].gaussian_likelihood(self.inputs, noise_std=noise_std)
+        
         ### Compute the cost function
-        # KL divergence of the code
-        kl_prior = self.prior.kl_IAF(self.inputs, self.code_layer, self.logqz)
-
         # KL divergence of each steps
         kl_steps = []
         for s in self.steps:
-            kl_steps.append(s.kl_normal(self.inputs))
+            kl_steps.append(s.kl(self.inputs))
 
-        # Finally, cost function of the reconstruction error
-        log_px = self.steps[0].log_likelihood(self.inputs)
 
         # Total cost function
-        LL = kl_prior - log_px
+        LL = log_px.mean()
         for kl in kl_steps:
-            LL += kl # *100.
+            if kl != 0:
+                LL += kl.mean()
 
         # Averaging over mini-batch
-        LL = LL.mean()
+        LL = LL.sum()
 
-        # Get trainable parameters and generate updates
-        params = get_all_params([self.output_layer, self.prior_layer, self.code_layer]+ [s.pz_smpl for s in self.steps], trainable=True)
+        # Get trainable parameters and generate updates+ [s.pz_smpl for s in self.steps]
+        params = get_all_params([self.output_layer]+ [s.pz_smpl for s in self.steps], trainable=True)
 
-        grads = T.grad(LL, params)
+        grads = T.grad(- LL, params)
         clip_grad = 10.
         cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
         updates = adam(cgrads, params, learning_rate=self._lr)
+        
+        # Training function
+        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_steps[-1].mean()], updates=updates)
 
-        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_prior.mean(), self.logqz.mean()], updates=updates)
+        # Get outputs from the generative network for a given code
+        ins = {self.code_layer: self._z, self.l_y: self._y}
+        for s in self.steps[::-1][1:]:
+            if s.qz_smpl is not None:
+                ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
+        x_smpl = get_output(self.output_layer, inputs=ins, deterministic=True)
+        self._decoder = theano.function([self._z, self._y], x_smpl)
+        
+        # Randomly samples from model
+        #ins = {self.l_y: self._y}
+        #for s in self.steps[::-1]:
+            #if s.qz_smpl is not None:
+                #ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
+        #x_smpl_p = get_output(self.output_layer, inputs=ins, deterministic=True)
+        #self._sampler = theano.function([self._y], x_smpl_p)
 
         # Get outputs from the recognition network
         z_smpl = get_output(self.code_layer, inputs=self.inputs, deterministic=True)
         self._code_sampler = theano.function([self._x, self._y], z_smpl)
 
         # Get outputs from the prior network
-        pz_smpl = get_output(self.prior_layer, inputs={self.l_y: self._y}, deterministic=True)
+        pz_smpl = get_output(self.steps[-1].pz_smpl, inputs={self.l_y: self._y}, deterministic=True)
         self._prior_sampler = theano.function([self._y], pz_smpl)
+        
+        # Get reconstruction of auto-encoder
+        ins = {self.l_x: self._x, self.l_y: self._y}
+        x_rec = get_output(self.output_layer, inputs=ins, deterministic=True)
+        self._reconstruct = theano.function([self._x, self._y], x_rec)
 
-        # Get outputs from the generative network
-        ins = {self.code_layer: self._z, self.l_y: self._y}
-        for s in self.steps[::-1]:
-            if s.qz_smpl is not None:
-                ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
-        x_smpl = get_output(self.output_layer, inputs=ins,
-                            deterministic=True)
-        self._output_sampler = theano.function([self._z, self._y], x_smpl)
+        
     
     def transform(self, X, y):
         """
@@ -206,18 +200,12 @@ class ladder(object):
         res = []
         n_samples  = h.shape[0]
         
-        #if mean:
-        #sampler = self._output_mean
-        #else:
-        sampler = self._output_sampler
+        sampler = self._decoder
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(n_samples/self.batch_size)):
-            if y is not None:
-                X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
-                            floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
-            else:
-                X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]))
+            X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
+                        floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(X)
 
         if n_samples % (self.batch_size) > 0 :
@@ -225,13 +213,9 @@ class ladder(object):
             ni = n_samples % (self.batch_size)
             hdata = np.zeros((self.batch_size, h.shape[1]))
             hdata[:ni] = h[i*self.batch_size:]
-            
-            if y is None:
-                X = sampler(floatX(hdata))
-            else:
-                ydata = np.zeros((self.batch_size, y.shape[1]))
-                ydata[:ni] = y[i*self.batch_size:]
-                X = sampler(floatX(hdata),  floatX(ydata))
+            ydata = np.zeros((self.batch_size, y.shape[1]))
+            ydata[:ni] = y[i*self.batch_size:]
+            X = sampler(floatX(hdata),  floatX(ydata))
                 
             res.append(X[:ni])
 
@@ -256,44 +240,31 @@ class ladder(object):
         h: array, of shape (n_samples, n_hidden)
             Randomly drawn code samples.
         """
-        check_is_fitted(self, "_network")
 
         res = []
         if n_samples is not None:
-            if y is None:
-                nsamples = n_samples
-            else:
-                nsamples = min([y.shape[0], n_samples])
+            nsamples = min([y.shape[0], n_samples])
         else:
-            if y is None:
-                nsamples = 1
-            else:
-                nsamples = y.shape[0]
+            nsamples = y.shape[0]
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(nsamples/self.batch_size)):
-            if y is not None:
-                z = self._prior_sampler(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
-            else:
-                z = self._prior_sampler()
+            z = self._prior_sampler(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(z)
 
         if nsamples % (self.batch_size) > 0 :
             i = int(nsamples/self.batch_size)
             ni = nsamples % (self.batch_size)
-            if y is not None:
-                ydata = np.zeros((self.batch_size, y.shape[1]))
-                ydata[:ni] = y[i*self.batch_size:]
-                z = self._prior_sampler(floatX(ydata))
-            else:
-                z = self._prior_sampler()
+            ydata = np.zeros((self.batch_size, y.shape[1]))
+            ydata[:ni] = y[i*self.batch_size:]
+            z = self._prior_sampler(floatX(ydata))
             res.append(z[:ni])
 
         # Concatenate processed data
         z = np.concatenate(res)
         return z
 
-    def sample(self, y=None, n_samples=None, mean=False):
+    def sample(self, y=None, n_samples=None):
         """
         Draws new samples from the generative network and the prior distribution, conditioned
         on variable y.
@@ -315,7 +286,28 @@ class ladder(object):
         X: array, of shape (n_samples, n_features)
             Randomly drawn samples.
         """
-        check_is_fitted(self, "_network")
+        res = []
+        if n_samples is not None:
+            nsamples = min([y.shape[0], n_samples])
+        else:
+            nsamples = y.shape[0]
+        
+        sampler = self._sampler
 
-        h = self.sample_prior(y=y, n_samples=n_samples)
-        return self.inverse_transform(h, y, mean=mean)
+        # Process data using batches, for optimisation and memory constraints
+        for i in range(int(n_samples/self.batch_size)):
+            X = sampler(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            res.append(X)
+
+        if n_samples % (self.batch_size) > 0 :
+            i = int(n_samples/self.batch_size)
+            ni = n_samples % (self.batch_size)
+            ydata = np.zeros((self.batch_size, y.shape[1]))
+            ydata[:ni] = y[i*self.batch_size:]
+            X = sampler(floatX(ydata))
+                
+            res.append(X[:ni])
+
+        # Concatenate processed data
+        X = np.concatenate(res)
+        return X

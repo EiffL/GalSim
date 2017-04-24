@@ -2,6 +2,5 @@
 __version__ = "0.1"
 
 from .ladder.base import ladder
-from .ladder.prior import gmm_prior
-from .ladder.step import resnet_step, dens_step
+from .ladder.step import resnet_step, dens_step, gmm_prior_step
 
