@@ -15,8 +15,10 @@ from lasagne.layers import BatchNormLayer, NonlinearityLayer, SliceLayer, Elemwi
 from ..layers.sample import GaussianSampleLayer, BernoulliSampleLayer, GMSampleLayer
 from ..layers.ar import ARConv2DLayer
 from ..blocks.MADE import MADE
-from ..layers.distributions import ClampLogVarLayer, MergeMeanLayer, MergeLogVarLayer, LogNormalLayer, LogGMLayer
+from ..layers.distributions import ClampLogVarLayer, MergeMeanLayer, MergeLogVarLayer, LogNormalLayer, LogGMLayer, KLLayer
+from ..layers.merge import CondConcatLayer
 from ..distributions import kl_normal2_normal2, log_normal2, log_bernoulli
+
 
 import math
 
@@ -198,11 +200,11 @@ class resnet_step(ladder_step):
             self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
             self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
             self.log_pz = LogNormalLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
-            self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
-            
+            #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
+            self.KL_term = KLLayer(self.log_pz, self.log_qz)
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
-            branch = ConcatLayer([branch, self.qz_smpl])
+            branch = CondConcatLayer(branch, self.qz_smpl, self.pz_smpl)
         else:
             self.log_pz = None
             self.pz_smpl = None
@@ -375,7 +377,8 @@ class gmm_prior_step(ladder_step):
         
         self.log_pz = LogGMLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         
-        self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
+        #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
+        self.KL_term = KLLayer(self.log_pz, self.log_qz)
         self.top_down_net = p
         return self.top_down_net
 

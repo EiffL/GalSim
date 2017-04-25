@@ -75,7 +75,13 @@ class ladder(object):
             
         # Output of the ladder
         self.output_layer = p
-
+        
+        # Get outputs from the generative network for a given code
+        ins = {self.l_x: self._x, self.code_layer: self._z, self.l_y: self._y}
+        x_smpl = get_output(self.output_layer, inputs=ins, deterministic=True, alternative_path=True)
+        self._decoder = theano.function([ self._x, self._z, self._y], x_smpl)
+        print "success"
+        
         # Building the cost function
         self.cost_layers = [LogNormalLayer(z=self.l_x, mean=self.output_layer, cst_std=noise_std),]
         for s in self.steps:
@@ -98,13 +104,6 @@ class ladder(object):
         # Training function
         self._trainer = theano.function([self._x, self._y, self._lr], [-LL.mean(), log_px.mean(), kl0.mean(),kl1.mean(), klp.mean()], updates=updates)
 
-        # Get outputs from the generative network for a given code
-        ins = {self.code_layer: self._z, self.l_y: self._y}
-        for s in self.steps[::-1][1:]:
-            if s.qz_smpl is not None:
-                ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
-        x_smpl = get_output(self.output_layer, inputs=ins, deterministic=True)
-        self._decoder = theano.function([self._z, self._y], x_smpl)
         
         # Randomly samples from model
         #ins = {self.l_y: self._y}
@@ -200,7 +199,7 @@ class ladder(object):
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(n_samples/self.batch_size)):
-            X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
+            X = sampler(floatX(np.zeros((self.batch_size,self.n_c,self.n_x,self.n_x))), floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
                         floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(X)
 
@@ -211,7 +210,7 @@ class ladder(object):
             hdata[:ni] = h[i*self.batch_size:]
             ydata = np.zeros((self.batch_size, y.shape[1]))
             ydata[:ni] = y[i*self.batch_size:]
-            X = sampler(floatX(hdata),  floatX(ydata))
+            X = sampler(floatX(np.zeros((self.batch_size,self.n_c,self.n_x,self.n_x))),floatX(hdata),  floatX(ydata))
                 
             res.append(X[:ni])
 
