@@ -6,10 +6,14 @@ import theano.tensor as T
 
 import numpy as np
 
-from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer
+from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer, ElemwiseSumLayer
 from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
 from lasagne.utils import floatX
+
+from ..layers.distributions import LogNormalLayer
+
+
 
 
 class ladder(object):
@@ -72,35 +76,27 @@ class ladder(object):
         # Output of the ladder
         self.output_layer = p
 
-        # Reconstruction error
-        log_px = self.steps[0].gaussian_likelihood(self.inputs, noise_std=noise_std)
-        
-        ### Compute the cost function
-        # KL divergence of each steps
-        kl_steps = []
+        # Building the cost function
+        self.cost_layers = [LogNormalLayer(z=self.l_x, mean=self.output_layer, cst_std=noise_std),]
         for s in self.steps:
-            kl_steps.append(s.kl(self.inputs))
+            if s.KL_term is not None:
+                self.cost_layers.append(s.KL_term)
 
+        # Summing terms
+        self.cost_layer = ElemwiseSumLayer(self.cost_layers)
+        
+        LL, log_px, kl0, kl1, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[1], self.cost_layers[2], self.cost_layers[-1]], inputs=self.inputs)
 
-        # Total cost function
-        LL = log_px.mean()
-        for kl in kl_steps:
-            if kl != 0:
-                LL += kl.mean()
+        # Get trainable parameters and generate updates
+        params = get_all_params([self.cost_layer], trainable=True)
 
-        # Averaging over mini-batch
-        LL = LL.sum()
-
-        # Get trainable parameters and generate updates+ [s.pz_smpl for s in self.steps]
-        params = get_all_params([self.output_layer]+ [s.pz_smpl for s in self.steps], trainable=True)
-
-        grads = T.grad(- LL, params)
-        clip_grad = 10.
-        cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
-        updates = adam(cgrads, params, learning_rate=self._lr)
+        grads = T.grad(- LL.mean(), params)
+        #clip_grad = 10.
+        #cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
+        updates = adam(grads, params, learning_rate=self._lr)
         
         # Training function
-        self._trainer = theano.function([self._x, self._y, self._lr], [LL, log_px.mean(), kl_steps[-1].mean()], updates=updates)
+        self._trainer = theano.function([self._x, self._y, self._lr], [-LL.mean(), log_px.mean(), kl0.mean(),kl1.mean(), klp.mean()], updates=updates)
 
         # Get outputs from the generative network for a given code
         ins = {self.code_layer: self._z, self.l_y: self._y}

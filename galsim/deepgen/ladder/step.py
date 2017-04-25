@@ -42,37 +42,8 @@ class ladder_step():
         """
         self.log_pz = None
         self.log_qz = None
+        self.KL_term = None
         self.top_down_net = p 
-
-    def kl(self, inputs):
-        """
-        Computes the kl divergence of the lattent variables in this layer
-        """
-        if self.log_pz is not None and self.log_qz is not None:
-            pz, qz = get_output([self.log_pz, self.log_qz], inputs=inputs)
-            return pz - qz
-        else:
-            return 0
-
-    def gaussian_likelihood(self, inputs, noise_std=1):
-        """
-        Computes the log likelihood assuming a Gaussian model
-        """
-        x, x_mu = get_output([self.d_in, self.top_down_net], inputs=inputs)
-        shape = get_output_shape(self.d_in)
-        c = - 0.5 * math.log(2*math.pi)
-        log_px_given_z = c - math.log(noise_std) - (x - x_mu)**2 / (2 * noise_std**2)
-        return log_px_given_z.sum(axis=range(1,len(shape)))
-    
-    
-    def bernoulli_likelihood(self, inputs):
-        """
-        Computes the log likelihood assuming a Bernoulli model
-        """
-        x, x_mu = get_output([self.d_in, self.top_down_net], inputs=inputs)
-        shape = get_output_shape(self.d_in)
-        log_px_given_z = log_bernoulli(x, x_mu, eps=1e-7)
-        return log_px_given_z.sum(axis=range(1,len(shape)))
 
 
 class resnet_step(ladder_step):
@@ -108,18 +79,22 @@ class resnet_step(ladder_step):
             branch = input_net
         else:
             input_net = d
-            branch = BatchNormLayer(d)
-            branch = NonlinearityLayer(branch, elu)
+            branch = d
+            branch = NonlinearityLayer(BatchNormLayer(branch), elu)
 
         #
         # Main branch
         #
         branch = Conv2DLayer(branch, num_filters=self.n_filters+self.latent_dim, filter_size=3, stride=1, nonlinearity=identity, pad='same', W=he_norm)
-        
+
         if self.latent_dim > 0:
             branch_posterior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
+            # Encoding for the posterior
+            self.d_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
+            self.d_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(self.latent_dim, None), axis=1))
+
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
-        
+
         branch = NonlinearityLayer(BatchNormLayer(branch), elu)
         branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=stride, nonlinearity=identity, pad='same', W=he_norm)
 
@@ -133,11 +108,6 @@ class resnet_step(ladder_step):
 
         self.bottom_up_net = ElemwiseSumLayer([branch, shortcut])
         
-        if self.latent_dim > 0:
-            # Encoding for the posterior
-            self.d_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
-            self.d_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(-self.latent_dim, None), axis=1))
-
         return self.bottom_up_net
 
 
@@ -222,10 +192,21 @@ class resnet_step(ladder_step):
                                 pad='same',
                                 W=he_norm)
         if self.latent_dim > 0:
+            # Define step prior
             branch_prior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
+            self.pz_mu = SliceLayer(branch_prior, indices=slice(0,self.latent_dim), axis=1)
+            self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
+            self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
+            self.log_pz = LogNormalLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
+            self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
+            
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
             branch = ConcatLayer([branch, self.qz_smpl])
+        else:
+            self.log_pz = None
+            self.pz_smpl = None
+            self.KL_term = None
 
         branch = NonlinearityLayer(BatchNormLayer(branch), elu)
         branch = Conv2DLayer(branch,
@@ -235,16 +216,6 @@ class resnet_step(ladder_step):
                              nonlinearity=identity,
                              pad='same',
                              W=he_norm)
-
-        if self.latent_dim > 0:
-            # Define step prior
-            self.pz_mu = SliceLayer(branch_prior, indices=slice(0,self.latent_dim), axis=1)
-            self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
-            self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
-            self.log_pz = LogNormalLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
-        else:
-            self.log_pz = None
-            self.pz_smpl = None
 
         if self.n_filters_in != self.n_filters or self.downsample:
             shortcut = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=1, nonlinearity=None,  stride=stride, W=he_norm, crop='same',
@@ -306,6 +277,7 @@ class dens_step(ladder_step):
         self.pz_smpl = None
         self.log_qz = None
         self.log_pz = None
+        self.KL_term = None
         
         # If the input needs to be reshaped in any way we do it first
         branch = ConcatLayer([FlattenLayer(p), y])
@@ -403,6 +375,7 @@ class gmm_prior_step(ladder_step):
         
         self.log_pz = LogGMLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         
+        self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
         self.top_down_net = p
         return self.top_down_net
 
