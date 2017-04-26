@@ -75,27 +75,22 @@ class LogNormalLayer(lasagne.layers.MergeLayer):
     Computes the element wise log likelihood with a Gaussian model
     """
     
-    def __init__(self, z, mean, log_var=None, cst_std=1, epsilon=1e-7, **kwargs):
-        if log_var is None:
-            super(LogNormalLayer, self).__init__([z,mean], **kwargs)
-            self.cst_std = cst_std
-        else:
-            super(LogNormalLayer, self).__init__([z,mean,log_var], **kwargs)
-            self.cst_std = None
+    def __init__(self, z, mean, log_var, epsilon=1e-7, **kwargs):
+        super(LogNormalLayer, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.in_shape = get_output_shape(z)
+        self.in_logvar_shape = get_output_shape(log_var)
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
     
     def get_output_for(self, inputs, **kwargs):
-        if self.cst_std is None:
-            z, mean, logvar = inputs
-            pz = log_normal2(z, mean, logvar, eps=self.epsilon)
-        else:
-            z, mean = inputs
-            c = - 0.5 * math.log(2*math.pi)
-            pz = c - math.log(self.cst_std) - (z - mean)**2 / (2 * self.cst_std**2)
+        z, mean, logvar = inputs
+        
+        # If logvar is a diagonal, pad it to the right until we match the dimension of x
+        if len(self.in_logvar_shape) < len(self.in_shape):
+            logvar = T.shape_padright(logvar, n_ones=(len(self.in_shape) - len(self.in_logvar_shape)))
+        pz = log_normal2(z, mean, logvar, eps=self.epsilon)
         return pz.sum(axis=range(1,len(self.in_shape)))
 
 

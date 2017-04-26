@@ -26,12 +26,25 @@ TODO: Add documentation.
 import galsim
 import time
 import numpy as np
+from .generative_model import GenerativeGalaxyModel
 
-from deepgen import ladder, gmm_prior, resnet_step, dens_step
+from deepgen import ladder, gmm_prior_step, resnet_step, dens_step
 
-from numpy.random import randn, randint
+from numpy.random import randint, permutation
 from lasagne.utils import floatX
 
+
+def _preprocessing_worker(params):
+    """
+    Outputs an image after applying random rotation, scaling and noise
+    padding
+    """
+    real_galaxy_catalog, stamp_size, pixel_scale = params
+    g_o = galsim.RealGalaxy(real_galaxy_catalog, noise_pad_size=stamp_size*pixel_scale, pad_factor=1)
+    g = g_o.original_gal.rotate(galsim.Angle(-np.random.rand()*2*np.pi, galsim.radians)) 
+    im = galsim.Image(stamp_size, stamp_size)
+    g.drawImage(image=im, scale=pixel_scale)
+    return im.array
 
 class ResNetVAE(GenerativeGalaxyModel):
     """
@@ -41,111 +54,148 @@ class ResNetVAE(GenerativeGalaxyModel):
                  stamp_size,
                  quantities=[],
                  batch_size=32,
-                 n_hidden=128,
-                 n_bands=1):
+                 n_bands=1,
+                 pixel_scale=0.03):
         super(self.__class__, self).__init__(quantities)
         self.stamp_size = stamp_size
         self.batch_size = batch_size
-        self.n_hidden = n_hidden
         self.n_bands = n_bands
+        self.pixel_scale = pixel_scale
+
+        n_hidden = 8
 
         # Create the architecture of the ladder
-        p = gmm_prior(n_units=[256, 512],
-                      n_hidden=self.n_hidden,
-                      n_gaussians=256)
+        p = gmm_prior_step(n_units=[256, 256],
+                    n_hidden=n_hidden,
+                    n_gaussians=512)
 
-        # First resnet layer, output 32x32x32
-        resnet_1 = resnet_step(n_filters_in=self.n_bands,
-                               n_filters=[16, 32],
-                               latent_dim=32,
-                               resnet_per_stage=3,
-                               prefilter=True)
-        # TODO: Fix that
-        resnet_1.noise_std = 0.002  # Rough noise std deviation in the images
+        # First resnet layer
+        resnet_1 = resnet_step(n_filters=64,
+                            latent_dim=16,
+                            prefilter=True)
 
-        # Second resnet layer, output 256x8x8
-        resnet_2 = resnet_step(n_filters_in=32, n_filters=[64, 128, 256],
-                               latent_dim=256, resnet_per_stage=2, prefilter=False)
+        resnet_2 = resnet_step(n_filters=64,
+                            latent_dim=16,
+                            downsample=True)
 
-        # Dense encoding layer
-        dense_1 = dens_step(n_out= self.n_hidden,
-                            n_units=[512, 256])
+        #resnet_3 = resnet_step(n_filters=128,
+                                #latent_dim=32,
+                                #downsample=True)
 
+        #resnet_4 = resnet_step(n_filters=128,
+                                #latent_dim=32,
+                                #downsample=True)
+
+        dense_4 = dens_step(n_units=128)
 
         # Build the ladder
-        self.model = ladder(n_bands, stamp_size, len(quantities),
-                            [resnet_1, resnet_2, dense_1], p,
-                            learning_rate=0.001)
+        self.model = ladder(n_bands, stamp_size,
+                            len(quantities),
+                            [resnet_1, resnet_2, dense_4, p],
+                            batch_size=batch_size)
 
-    def fit(self, X, features):
+
+    def fit(self, real_cat, param_cat, valid_index=None,
+            learning_rate=0.001, n_epochs=10, lr_step=5):
         """
         Train the model
 
         Parameters
         ----------
-
-        X: list of GSObjects
-            Images to use for training
-
-        features: astropy Table with corresponding quantities
-            table with features to train on
-        """
         
-        self.batch_per_epoch = len(x_train)/batch_size
+        real_cat
+        
+        param_cat
+        
+        """
+        # multiprocessing for online generation of training images
+        from multiprocessing import Pool
+        pool = Pool()
+        
+        if valid_index is None:
+            valid_index = range(real_cat.nobjects)
 
-        # Main training loop
-        for i in range(60):
-            if i % 20 == 0:
-                learning_rate *= 0.1
-            print(i, learning_rate)
+        ngal = len(valid_index)
 
-            train_err = 0.
-            train_kl = 0.
-            train_logpx = 0.
+        batch_per_epoch = ngal/self.batch_size
+
+        xdata = np.zeros((self.batch_size, self.n_bands, self.stamp_size, self.stamp_size)).astype('float32')
+        ydata = np.zeros((self.batch_size, len(self.quantities))).astype('float32')
+
+        # Loop over training epochs
+        for i in range(n_epochs):
             start_time = time.time()
+
+            # Update learning rate
+            if  i > 0 and (i % lr_step == 0):
+                learning_rate /= 10.
+                print("Updating learning rate to %f"%learning_rate)
+
+            acc_train_err = 0
+            acc_logpx = 0
+            acc_klp = 0
             count = 0
-            display = False
-            old_logpx = 0
 
-            tmp_train_err=0
-            tmp_train_kl=0
-            tmp_train_logpx=0
-            tmp_count=0
-            tmp_start_time = time.time()
+            # Random indices to shuffle the data
+            inds = permutation(ngal)
 
+            # Construct the batch
+            def get_batch_params(inds_batch):
+                # Sets up parameters for the workers
+                params = []
+                for j in range(self.batch_size):
+                    orig_index = inds_batch[j]
+                    gal_image = real_cat.getGal(orig_index)
+                    psf_image = real_cat.getPSF(orig_index)
+                    noise_image, pixel_scale, var = real_cat.getNoiseProperties(orig_index)
+                    params.append(((gal_image, psf_image, noise_image, pixel_scale, var),
+                                   self.stamp_size, self.pixel_scale))
+                return params
+            
+            # Loop over batches
             for b in range(batch_per_epoch):
 
-                xdata, ydata = batches.next()
+                # Indices of objects to include in batch
+                inds_batch = valid_index[inds[b*self.batch_size:(b+1)*self.batch_size]]
+                
+                if b == 0:
+                    params = get_batch_params(inds_batch)
+                    preprocessing_pool = pool.map_async(_preprocessing_worker, params)
 
-                # Train the auto-encoder
-                ce_err, logpx_err, kl_err  = model._trainer(floatX(xdata),
+                # recarrays are the absolute worst, can't find another
+                # way to exctract the values than through a loop
+                for j, q in  enumerate(self.quantities):
+                    ydata[:,j] = param_cat[q][inds_batch]
+
+                sigma_data = np.log(real_cat.variance[inds_batch])
+
+                # Get the preprocessed images, fails after a minute
+                ims = preprocessing_pool.get(timeout=60)
+                xdata[:,0,:,:] = np.stack(ims)
+                return xdata, ydata, sigma_data
+                # Start computation of the next batch of images
+                if b < (batch_per_epoch - 1):
+                    inds_batch_next = valid_index[inds[(b+1)*self.batch_size:(b+2)*self.batch_size]]
+                    params = get_batch_params(inds_batch_next)
+                    preprocessing_pool = pool.map_async(_preprocessing_worker, params)
+
+                ## Perform update
+                train_err, logpx, klp = self.model._trainer(floatX(xdata),
                                                             floatX(ydata),
+                                                            floatX(sigma_data),
                                                             floatX(learning_rate))
 
-                train_err += ce_err
-                train_kl += kl_err
-                train_logpx += logpx_err
-
-                tmp_train_err += ce_err
-                tmp_train_kl += kl_err
-                tmp_train_logpx += logpx_err
-
+                acc_train_err += train_err
+                acc_logpx += logpx
+                acc_klp += klp
                 count += 1
-                tmp_count+=1
-
-                if tmp_count >= batch_print:
-                    print("update took %f s, and epoch is done at %f percent"%(time.time() - tmp_start_time, 100.*b/batch_per_epoch))
-                    print("Training loss: %f ; kl %f ; log_px_z %f"%(tmp_train_err / (tmp_count), tmp_train_kl / (tmp_count), tmp_train_logpx/ (tmp_count)))
-                    tmp_train_err=0
-                    tmp_train_kl=0
-                    tmp_train_logpx=0
-                    tmp_count=0
-                    tmp_start_time = time.time()
-
-            # Then we print the results for this epoch:
-            print("Epoch took %f s"%(time.time() - start_time))
-            print("Training loss: %f ; kl %f ; log_px_z %f"%(train_err / (count), train_kl / (count), train_logpx/ (count)))
-
+                
+            acc_train_err /= count
+            acc_logpx /= count
+            acc_klp /= count
+            print("--- Epoch %d took %f s"%(i, time.time() - start_time))
+            print("    Variational Lower Bound: %f, log_px: %f, KL prior: %f"%(acc_train_err,acc_logpx, acc_klp))
+        pool.close()
 
 
     def sample(self, y):

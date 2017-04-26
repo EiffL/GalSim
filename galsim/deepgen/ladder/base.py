@@ -14,15 +14,12 @@ from lasagne.utils import floatX
 from ..layers.distributions import LogNormalLayer
 
 
-
-
 class ladder(object):
 
     def __init__(self, n_c, n_x, n_y,
                  steps,
                  batch_size=32,
-                 noise_std=1,
-                 learning_rate=0.001):
+                 noise_std=1):
         """
         Initialises the ladder structure
 
@@ -32,7 +29,6 @@ class ladder(object):
             List of steps for the ladder in bottom up order
         """
         self.steps = steps
-        self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.n_c = n_c
         self.n_x = n_x
@@ -46,15 +42,17 @@ class ladder(object):
         self._z = T.matrix('z')
         # Variable for the learning rate
         self._lr = T.scalar('lr')
-        
+        # Variable for noise standard deviation
+        self._sigma = T.matrix('sigma')
+
+        # Define input layers
         self.l_x = InputLayer(shape=(self.batch_size, self.n_c,
                                      self.n_x, self.n_x),
                               input_var=self._x, name='x')
-        
         self.l_y = InputLayer(shape=(self.batch_size, self.n_y),
                               input_var=self._y, name='y')
-
-        self.inputs = {self.l_x: self._x, self.l_y: self._y}
+        self.l_sigma = InputLayer(shape=(self.batch_size, 1),
+                                  input_var=self._sigma, name='sigma')
 
         ### Build and connect network
         # Connect the deterministic upward pass
@@ -72,62 +70,57 @@ class ladder(object):
         for i, s in enumerate(self.steps[::-1]):
             p = s.connect_downward(p, self.l_y)
             print("top-down", get_output_shape(p))
-            
+
         # Output of the ladder
         self.output_layer = p
-        
-        # Get outputs from the generative network for a given code
-        ins = {self.l_x: self._x, self.code_layer: self._z, self.l_y: self._y}
-        x_smpl = get_output(self.output_layer, inputs=ins, deterministic=True, alternative_path=True)
-        self._decoder = theano.function([ self._x, self._z, self._y], x_smpl)
-        print "success"
-        
+
         # Building the cost function
-        self.cost_layers = [LogNormalLayer(z=self.l_x, mean=self.output_layer, cst_std=noise_std),]
+        # Reconstruction error
+        self.cost_layers = [LogNormalLayer(z=self.l_x, mean=self.output_layer, log_var=self.l_sigma),]
+        # KL divergence of probabilistic layers
         for s in self.steps:
             if s.KL_term is not None:
                 self.cost_layers.append(s.KL_term)
-
         # Summing terms
         self.cost_layer = ElemwiseSumLayer(self.cost_layers)
         
-        LL, log_px, kl0, kl1, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[1], self.cost_layers[2], self.cost_layers[-1]], inputs=self.inputs)
+        # Outputs for training
+        inputs = {self.l_x: self._x, self.l_y: self._y, self.l_sigma: self._sigma}
+        LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1]], inputs=inputs)
 
         # Get trainable parameters and generate updates
         params = get_all_params([self.cost_layer], trainable=True)
 
+        # Compute gradients
         grads = T.grad(- LL.mean(), params)
-        #clip_grad = 10.
-        #cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
-        updates = adam(grads, params, learning_rate=self._lr)
-        
+        clip_grad = 10.
+        cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
+        updates = adam(cgrads, params, learning_rate=self._lr)
+    
         # Training function
-        self._trainer = theano.function([self._x, self._y, self._lr], [-LL.mean(), log_px.mean(), kl0.mean(),kl1.mean(), klp.mean()], updates=updates)
+        self._trainer = theano.function([self._x, self._y, self._sigma, self._lr],
+                                        [-LL.mean(), log_px.mean(), klp.mean()],
+                                        updates=updates)
 
-        
-        # Randomly samples from model
-        #ins = {self.l_y: self._y}
-        #for s in self.steps[::-1]:
-            #if s.qz_smpl is not None:
-                #ins[s.qz_smpl] = get_output(s.pz_smpl, inputs=ins, deterministic=True)
-        #x_smpl_p = get_output(self.output_layer, inputs=ins, deterministic=True)
-        #self._sampler = theano.function([self._y], x_smpl_p)
+        # Get outputs from the generative network for a given code TODO: Find a way to remove dependence on x
+        inputs = {self.l_x: self._x, self.code_layer: self._z, self.l_y: self._y}
+        x_smpl = get_output(self.output_layer, inputs=inputs, deterministic=True, alternative_path=True)
+        self._decoder = theano.function([self._x, self._z, self._y], x_smpl)
 
         # Get outputs from the recognition network
-        z_smpl = get_output(self.code_layer, inputs=self.inputs, deterministic=True)
+        inputs = {self.l_x: self._x, self.l_y: self._y}
+        z_smpl = get_output(self.code_layer, inputs=inputs, deterministic=True)
         self._code_sampler = theano.function([self._x, self._y], z_smpl)
 
         # Get outputs from the prior network
         pz_smpl = get_output(self.steps[-1].pz_smpl, inputs={self.l_y: self._y}, deterministic=True)
         self._prior_sampler = theano.function([self._y], pz_smpl)
-        
+
         # Get reconstruction of auto-encoder
-        ins = {self.l_x: self._x, self.l_y: self._y}
-        x_rec = get_output(self.output_layer, inputs=ins, deterministic=True)
+        inputs = {self.l_x: self._x, self.l_y: self._y}
+        x_rec = get_output(self.output_layer, inputs=inputs, deterministic=True)
         self._reconstruct = theano.function([self._x, self._y], x_rec)
 
-        
-    
     def transform(self, X, y):
         """
         Transforms the data into latent code.

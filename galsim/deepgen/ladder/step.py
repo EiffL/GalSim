@@ -353,9 +353,9 @@ class gmm_prior_step(ladder_step):
 
         network = y
         for i in range(len(self.n_units)):
-            network = DenseLayer(network, num_units=self.n_units[i],
+            network = batch_norm(DenseLayer(network, num_units=self.n_units[i],
                                           nonlinearity=self.nonlinearity,
-                                          name="prior_%d" % i)
+                                          name="prior_%d" % i))
 
         # Conditional prior distribution
         self.pz_mu = ReshapeLayer(DenseLayer( network,
