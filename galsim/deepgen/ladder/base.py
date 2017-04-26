@@ -6,7 +6,7 @@ import theano.tensor as T
 
 import numpy as np
 
-from lasagne.layers import get_output, get_all_params, get_output_shape, InputLayer, ElemwiseSumLayer
+from lasagne.layers import get_output, get_all_params, get_all_param_values, set_all_param_values, get_output_shape, InputLayer, ElemwiseSumLayer
 from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
 from lasagne.utils import floatX
@@ -252,50 +252,16 @@ class ladder(object):
         z = np.concatenate(res)
         return z
 
-    def sample(self, y=None, n_samples=None):
+    def get_params(self):
         """
-        Draws new samples from the generative network and the prior distribution, conditioned
-        on variable y.
-
-        Parameters
-        ----------
-        y: array, of shape (n_samples, n_conditional_features)
-            Conditional variable used by the prior.
-            
-        n_samples: int, optional
-            Number of samples to draw.
+        Returns model parameters
+        """
+        return get_all_param_values(self.cost_layer)
     
-        mean: boolean, optional
-            If True, returns the mean of the output distribution, otherwise
-            returns a sample from this distribution. (default: False)
-
-        Returns
-        -------
-        X: array, of shape (n_samples, n_features)
-            Randomly drawn samples.
+    def set_params(self, params):
         """
-        res = []
-        if n_samples is not None:
-            nsamples = min([y.shape[0], n_samples])
-        else:
-            nsamples = y.shape[0]
+        Sets model parameters for all layers
+        """
+        set_all_param_values(self.cost_layer, params)
+
         
-        sampler = self._sampler
-
-        # Process data using batches, for optimisation and memory constraints
-        for i in range(int(n_samples/self.batch_size)):
-            X = sampler(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
-            res.append(X)
-
-        if n_samples % (self.batch_size) > 0 :
-            i = int(n_samples/self.batch_size)
-            ni = n_samples % (self.batch_size)
-            ydata = np.zeros((self.batch_size, y.shape[1]))
-            ydata[:ni] = y[i*self.batch_size:]
-            X = sampler(floatX(ydata))
-                
-            res.append(X[:ni])
-
-        # Concatenate processed data
-        X = np.concatenate(res)
-        return X

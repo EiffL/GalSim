@@ -48,7 +48,7 @@ class GenerativeGalaxyModel(object):
         pass
 
     @abstractmethod
-    def write(self):
+    def write(self, filename):
         """
         Exports the parameters of the model
         """

@@ -32,7 +32,7 @@ from deepgen import ladder, gmm_prior_step, resnet_step, dens_step
 
 from numpy.random import randint, permutation
 from lasagne.utils import floatX
-
+import cPickle as pickle
 
 def _preprocessing_worker(params):
     """
@@ -55,7 +55,8 @@ class ResNetVAE(GenerativeGalaxyModel):
                  quantities=[],
                  batch_size=32,
                  n_bands=1,
-                 pixel_scale=0.03):
+                 pixel_scale=0.03,
+                 model_params=None):
         super(self.__class__, self).__init__(quantities)
         self.stamp_size = stamp_size
         self.batch_size = batch_size
@@ -93,6 +94,10 @@ class ResNetVAE(GenerativeGalaxyModel):
                             len(quantities),
                             [resnet_1, resnet_2, dense_4, p],
                             batch_size=batch_size)
+
+        # Load pre-trained parameters if provided
+        if model_params is not None:
+            self.model.set_params(model_params)
 
 
     def fit(self, real_cat, param_cat, valid_index=None,
@@ -198,16 +203,70 @@ class ResNetVAE(GenerativeGalaxyModel):
         pool.close()
 
 
-    def sample(self, y):
+    def sample(self, cat, noise=None,  rng=None, x_interpolant=None, k_interpolant=None,
+               pad_factor=4, noise_pad_size=0, gsparams=None):
         """
-        Samples images from the model
+        Samples images from the model conditionned on the input variables
+        
+        Parameters
+        ----------
+        
+        cat: recarray
+            table with the values to sample from 
         """
-        pass
-    
-    
-    
-    def write(self):
+        
+        # Build numpy array from data
+        y = np.zeros((len(cat), len(self.quantities)))
+        for j, q in  enumerate(self.quantities):
+            y[:,j] = cat[q]
+
+        # First sample code conditioned on y
+        z = self.model.sample_prior(y)
+        
+        # Then, decode the code 
+        x = self.model.inverse_transform(z, y)
+        
+        # Now, we build an InterpolatedImage for each of these
+        ims = []
+        for i in range(len(x)):
+            im = galsim.Image(np.ascontiguousarray(x[i,0].astype(np.float64)),
+                              scale=self.pixel_scale)
+            ims.append(galsim.InterpolatedImage(im,
+                                                x_interpolant=x_interpolant,           
+                                                k_interpolant=k_interpolant,
+                                                pad_factor=pad_factor,
+                                                noise_pad_size=noise_pad_size,
+                                                noise_pad=noise,
+                                                rng=rng,
+                                                gsparams=gsparams))
+        return ims
+
+
+    def write(self, filename):
         """
-        Exports the  trainned  model
+        Exports the trainned model
         """
-        pass
+        model_params = self.model.get_params()
+        all_params = [self.stamp_size,
+                 self.quantities,
+                 self.batch_size,
+                 self.n_bands,
+                 self.pixel_scale,
+                 model_params]
+        
+        f = file(filename, 'wb')
+        pickle.dump(all_params, f, protocol=pickle.HIGHEST_PROTOCOL)
+        f.close()
+
+    @classmethod
+    def read(cls, filename):
+        """
+        Reads  in a sruvey from a file
+        """    
+        f = file(filename, 'rb')
+        all_params = pickle.load(f)
+        f.close()
+        
+        stamp_size, quantities, batch_size, n_bands, pixel_scale, model_params = all_params
+
+        return cls(stamp_size, quantities, batch_size, n_bands, pixel_scale, model_params)
