@@ -32,7 +32,6 @@ from deepgen import ladder, gmm_prior_step, resnet_step, dens_step
 
 from numpy.random import randint, permutation
 from lasagne.utils import floatX
-import cPickle as pickle
 
 def _preprocessing_worker(params):
     """
@@ -63,6 +62,9 @@ class ResNetVAE(GenerativeGalaxyModel):
         self.n_bands = n_bands
         self.pixel_scale = pixel_scale
 
+        # Defines optional arguments for sampling
+        self.sample_opt_params["noise_pad_size"] = int
+        
         n_hidden = 8
 
         # Create the architecture of the ladder
@@ -242,7 +244,7 @@ class ResNetVAE(GenerativeGalaxyModel):
         return ims
 
 
-    def write(self, filename):
+    def write(self, file_name):
         """
         Exports the trainned model
         """
@@ -254,19 +256,6 @@ class ResNetVAE(GenerativeGalaxyModel):
                  self.pixel_scale,
                  model_params]
         
-        f = file(filename, 'wb')
+        f = file(file_name, 'wb')
         pickle.dump(all_params, f, protocol=pickle.HIGHEST_PROTOCOL)
         f.close()
-
-    @classmethod
-    def read(cls, filename):
-        """
-        Reads  in a sruvey from a file
-        """    
-        f = file(filename, 'rb')
-        all_params = pickle.load(f)
-        f.close()
-        
-        stamp_size, quantities, batch_size, n_bands, pixel_scale, model_params = all_params
-
-        return cls(stamp_size, quantities, batch_size, n_bands, pixel_scale, model_params)
