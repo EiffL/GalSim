@@ -167,12 +167,12 @@ class ResNetVAE(GenerativeGalaxyModel):
                 for j, q in  enumerate(self.quantities):
                     ydata[:,j] = param_cat[q][inds_batch]
 
-                sigma_data = np.log(real_cat.variance[inds_batch])
+                sigma_data = np.log(real_cat.variance[inds_batch]).reshape((self.batch_size, 1))
 
                 # Get the preprocessed images, fails after a minute
                 ims = preprocessing_pool.get(timeout=60)
                 xdata[:,0,:,:] = np.stack(ims)
-                return xdata, ydata, sigma_data
+                
                 # Start computation of the next batch of images
                 if b < (batch_per_epoch - 1):
                     inds_batch_next = valid_index[inds[(b+1)*self.batch_size:(b+2)*self.batch_size]]
