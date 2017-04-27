@@ -1,0 +1,66 @@
+
+
+# Define the PSF profile
+psf :
+    # We introduce here a new way to describe a profile.  We can use an image from a fits
+    # file and interpolate between the pixels with type = InterpolatedImage.
+    type : InterpolatedImage
+
+    # The only required parameter is the name of the file with the image.  Note: the file is
+    # bzipped, to demonstrate the new capability of reading in a file that has been compressed
+    # in various ways (which GalSim can infer from the filename).
+    image : "data/example_sdss_psf_sky0.fits.bz2"
+
+    scale : 0.1
+
+# Define the galaxy profile
+gal :
+
+    # COSMOS galaxies are generated from a cosmos_catalog (see below).
+    # They are based on the COSMOS field observed with HST.  The size and flux distribution
+    # are appropriate for an I < 23.5 magnitude limited survey.
+    type : GenerativeModelGalaxy
+
+    # The COSMOS galaxies can be either "real", meaning they are based on the real COSMOS
+    # image, including features like spiral arms, star-bursting regions, etc, or "parametric"
+    # which means either a Sersic fit or a bulge plus disk fit (according to which one gave
+    # the better chisq).  Here we use real 30% of the time, and parametric 70%.
+    mag_auto :
+        type : List
+        items : [ 20., 21., 22., 23., 24., 25 ]
+    
+    zphot : 0.5
+    
+    flux_radius : 10
+
+
+# The image field specifies some other information about the image to be drawn.
+image :
+    # If pixel_scale isn't specified, then pixel_scale = 1 is assumed.
+    pixel_scale : 0.2  # arcsec / pixel
+
+    # If you want noise in the image (which is typical) you specify that here.
+    # In this case we use gaussian noise.
+    noise :
+        type : Gaussian
+        sigma : 30  # standard deviation of the counts in each pixel
+
+    # You can also specify the size of the image if you want, but if you omit it
+    # (as we do here), then GalSim will automatically size the image appropriately.
+
+
+# Typically, you will want to specify the output format and file name.
+# If this is omitted, the output will be to a fits file with the same root name as the
+# config file (so demo1.fits in this case), but that's usually not a great choice.
+# So at the very least, you would typically want to specify at least the file_name.
+output :
+    dir : toto
+    file_name : demo14.fits
+
+
+# Define the input files
+input :
+
+    resnet_vae :
+        
+        file_name : vae_test.pckl
