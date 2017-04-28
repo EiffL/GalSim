@@ -115,16 +115,20 @@ class KLLayer(lasagne.layers.MergeLayer):
     Merges log likelihoods from prior and posterior into a KL divergence
     """
         
-    def __init__(self, log_pz, log_qz, negative=True, **kwargs):
-        super(KLLayer, self).__init__([log_pz, log_qz], **kwargs)
+    def __init__(self, log_pz, log_qz, negative=True, clip_negative=True, **kwargs):
+        super(self.__class__, self).__init__([log_pz, log_qz], **kwargs)
         self.negative = negative
+        self.clip_negative = clip_negative
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
     
     def get_output_for(self, inputs, **kwargs):
         log_pz, log_qz = inputs
-        kl = T.nnet.relu(log_qz - log_pz)
+        if self.clip_negative:
+            kl = T.nnet.relu(log_qz - log_pz)
+        else:
+            kl = log_qz - log_pz
         if self.negative:
             return - kl
         else:

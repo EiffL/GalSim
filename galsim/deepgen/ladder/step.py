@@ -378,7 +378,7 @@ class gmm_prior_step(ladder_step):
         self.log_pz = LogGMLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         
         #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
-        self.KL_term = KLLayer(self.log_pz, self.log_qz)
+        self.KL_term = KLLayer(self.log_pz, self.log_qz, clip_negative=False)
         self.top_down_net = p
         return self.top_down_net
 
