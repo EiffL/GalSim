@@ -11,8 +11,6 @@ from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
 from lasagne.utils import floatX
 
-from ..layers.distributions import LogNormalLayer
-
 
 class ladder(object):
 
@@ -76,7 +74,7 @@ class ladder(object):
 
         # Building the cost function
         # Reconstruction error
-        self.cost_layers = [LogNormalLayer(z=self.l_x, mean=self.output_layer, log_var=self.l_sigma),]
+        self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma)] # [LogNormalLayer(z=self.l_x, mean=self.output_layer, log_var=self.l_sigma),]
         # KL divergence of probabilistic layers
         for s in self.steps:
             if s.KL_term is not None:

@@ -7,7 +7,7 @@ import theano
 
 from lasagne.layers import get_output_shape
 
-from ..distributions import log_normal2, log_gm2
+from ..distributions import log_normal2, log_gm2, log_bernoulli
 
 class ClampLogVarLayer(lasagne.layers.Layer):
     """
@@ -69,14 +69,31 @@ class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
         return  - T.log(invsig2_t + invsig2_d)
 
-
-class LogNormalLayer(lasagne.layers.MergeLayer):
+class BernoulliLikelihoodLayer(lasagne.layers.MergeLayer):
     """
-    Computes the element wise log likelihood with a Gaussian model
+    Computes the log likelihood with a Bernoulli model
+    """
+    def __init__(self, z, mean,  epsilon=0, **kwargs):
+        super(self.__class__, self).__init__([z,mean], **kwargs)
+        self.epsilon = epsilon
+        self.in_shape = get_output_shape(z)
+        self.in_logvar_shape = get_output_shape(log_var)
+        
+    def get_output_shape_for(self, input_shapes):
+        return [input_shapes[0][0]]
+    
+    def get_output_for(self, inputs, **kwargs):
+        z, mean = inputs
+        pz = log_bernoulli(z, mean, eps=self.epsilon)
+        return pz.sum(axis=range(1,len(self.in_shape)))
+ 
+class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
+    """
+    Computes the log likelihood with a Gaussian model
     """
     
     def __init__(self, z, mean, log_var, epsilon=1e-7, **kwargs):
-        super(LogNormalLayer, self).__init__([z,mean,log_var], **kwargs)
+        super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.in_shape = get_output_shape(z)
         self.in_logvar_shape = get_output_shape(log_var)
@@ -93,14 +110,34 @@ class LogNormalLayer(lasagne.layers.MergeLayer):
         pz = log_normal2(z, mean, logvar, eps=self.epsilon)
         return pz.sum(axis=range(1,len(self.in_shape)))
 
-
-class LogGMLayer(lasagne.layers.MergeLayer):
+class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     """
-    Computes the element wise log likelihood with a Gaussian mixture model
+    Computes the log likelihood with a Gaussian model
+    """
+    
+    def __init__(self, z, mean, log_var, epsilon=1e-7, **kwargs):
+        super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
+        self.epsilon = epsilon
+        self.in_shape = get_output_shape(z)
+        
+    def get_output_shape_for(self, input_shapes):
+        return [input_shapes[0][0]]
+    
+    def get_output_for(self, inputs, **kwargs):
+        z, mean, log_var = inputs
+        # Ok, here we assume the logvar to have the same shape as our images
+        c = - 0.5 * math.log(2*math.pi)
+        pz = c - log_var/2 - ((x - mean)**2).sum(axis=-1)/ (2 * T.exp(log_var) + self.epsilon)
+        return pz.sum(axis=range(1,len(self.in_shape)))
+
+
+class GMLikelihoodLayer(lasagne.layers.MergeLayer):
+    """
+    Computes the elementwise log likelihood with a Gaussian mixture model
     """
     
     def __init__(self, z, mean, log_var, weight, epsilon=1e-7, **kwargs):
-        super(LogGMLayer, self).__init__([z,mean,log_var, weight], **kwargs)
+        super(self.__class__, self).__init__([z,mean,log_var, weight], **kwargs)
         self.epsilon = epsilon
         
     def get_output_shape_for(self, input_shapes):

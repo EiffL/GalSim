@@ -29,7 +29,7 @@ import numpy as np
 import cPickle as pickle
 from .generative_model import GenerativeGalaxyModel
 
-from deepgen import ladder, gmm_prior_step, resnet_step, dens_step
+from deepgen import ladder, gmm_prior_step, resnet_step, dens_step, pixel_input_step
 
 from numpy.random import randint, permutation
 from lasagne.utils import floatX
@@ -74,11 +74,13 @@ class ResNetVAE(GenerativeGalaxyModel):
                     IAF_sizes=[[128,128],[128,128]],
                     n_gaussians=512)
 
+        # Input layer
+        input_0 = pixel_input_step(n_filters=32)
+
         # First resnet layer, 64x64
         resnet_1 = resnet_step(n_filters=32,
-                            latent_dim=8,
-                            IAF_sizes=[[32,32],[32,32]],
-                            prefilter=True)
+                               latent_dim=8,
+                               IAF_sizes=[[32,32],[32,32]])
 
         resnet_2 = resnet_step(n_filters=64,
                             latent_dim=32,
