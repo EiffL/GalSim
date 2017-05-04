@@ -49,7 +49,7 @@ class ladder_step():
         self.top_down_net = p 
 
 
-class pixel_input_step(ladder_step):
+class input_step(ladder_step):
     
     def __init__(self, n_filters=None, filter_size=5, downsample=False, output_nonlinearity=identity):
         """
@@ -62,7 +62,7 @@ class pixel_input_step(ladder_step):
         
     def connect_upward(self, d, y):
         self.d_in = d
-        self.n_x = get_output_shape(d)[-1]    
+        self.n_x = get_output_shape(d)[2]    
         self.n_filters_in = get_output_shape(d)[1]    
         stride = 2 if self.downsample else 1
         
@@ -87,90 +87,38 @@ class pixel_input_step(ladder_step):
         
         stride = 2 if self.downsample else 1
         input_net = p
-        if self.n_filters is not None or self.downsample:
-            input_net = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, stride=stride, nonlinearity=identity,
+        if self.downsample:
+            input_net = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, 
+                                              filter_size=self.filter_size, 
+                                              stride=stride, 
+                                              nonlinearity=identity,
                                               crop='same',
                                               output_size=self.n_x)
-
+        else:
+            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size,
+                                    nonlinearity=identity, pad='same')
         # Apply non linearity on ouput
         self.top_down_net = NonlinearityLayer(input_net, nonlinearity=self.output_nonlinearity)
         return self.top_down_net
 
 
-    def GaussianLikelihood(self, input_logvar):
+    def GaussianLikelihood(self, input_logvar, diagCovariance=True):
         """
         This function returns a layers computing a Gaussian likelihood for the model,
         under the assumption that the noise is uncorrelated
         """
-        return GaussianLikelihoodLayer(z=self.d_in, mean=self.top_down_net, log_var=input_logvar)
+        if diagCovariance:
+            return GaussianLikelihoodLayer(z=self.d_in, mean=self.top_down_net, log_var=input_logvar)
+        else:
+            out = RFFTLayer(self.top_down_net)
+            z = RFFTLayer(self.d_in)
+            return FourierGaussianLikelihoodLayer(z=z, mean=out, log_var=input_logvar)
 
     def BernoulliLikelihood(self):
         """
         returns a Bernoulli likelihood, WARNING: Make sure the output is between 0 and 1
         """
         return BernoulliLikelihoodLayer(self.d_in, self.top_down_net)
-
-
-class fourier_input_step(ladder_step):
-    
-    def __init__(self, n_filters=None, filter_size=5, downsample=False, output_nonlinearity=identity):
-        """
-            Filter bank for input and output, all of this is optional
-        """
-        self.n_filters = n_filters
-        self.downsample = downsample
-        self.output_nonlinearity = output_nonlinearity
-        self.filter_size = filter_size
-        
-    def connect_upward(self, d, y):
-        self.d_in = d
-        self.n_x = get_output_shape(d)[-1]    
-        self.n_filters_in = get_output_shape(d)[1]    
-        stride = 2 if self.downsample else 1
-        
-        # First apply inverse Fourier transform
-        input_net = iRFFTLayer(d)
-
-        if self.n_filters is not None:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters, filter_size=self.filter_size, stride=stride, nonlinearity=elu, pad='same')
-        elif self.downsample:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, stride=stride, nonlinearity=elu, pad='same')
-        
-        self.bottom_up_net = input_net
-        return self.bottom_up_net
-
-            
-    def connect_downward(self, p, y):
-        # Deterministic layer:
-        self.log_pz = None
-        self.pz_smpl = None
-        self.KL_term = None
-        self.log_qz = None
-        self.qz_smpl = None
-        
-        stride = 2 if self.downsample else 1
-        input_net = p
-        if self.n_filters is not None or self.downsample:
-            input_net = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, stride=stride, nonlinearity=identity,
-                                              crop='same',
-                                              output_size=self.n_x)
-
-        # Apply non linearity on ouput
-        self.out_real = NonlinearityLayer(input_net, nonlinearity=self.output_nonlinearity)
-        
-        # Apply Fourier Transform to output
-        self.top_down_net = RFFTLayer(self.out_real)
-        
-        return self.top_down_net
-
-
-    def FourierGaussianLikelihood(self, input_logvar):
-        """
-        This function returns a layers computing a Gaussian likelihood for the model,
-        under the assumption that the noise is uncorrelated
-        """
-        return FourierGaussianLikelihoodLayer(z=self.d_in, mean=self.top_down_net, log_var=input_logvar)
-
 
 
 class resnet_step(ladder_step):
@@ -193,8 +141,8 @@ class resnet_step(ladder_step):
         self.d_in = d
         
         # Get the dimension of the input and check if downsampling is requested 
-        self.n_filters_in = get_output_shape(d)[1]    
-        self.n_x =  get_output_shape(d)[-1]    
+        self.n_filters_in = get_output_shape(d)[1]
+        self.n_x =  get_output_shape(d)[2]
         stride = 2 if self.downsample else 1
 
         # If the input needs to be reshaped in any way we do it first

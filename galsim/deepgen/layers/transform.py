@@ -69,15 +69,15 @@ class RFFTLayer(lasagne.layers.Layer):
         super(self.__class__, self).__init__(input, **kwargs)
 
     def get_output_shape_for(self, input_shape):
-        shape = input_shape
-        shape[-1] = shape[-1]//2 + 1
-        shape.append(2)
+        shape = input_shape[:-1]
+        shape += (input_shape[-1]//2 + 1,)
+        shape += (2,)
         return shape
 
     def get_output_for(self, X, **kwargs):
         s = X.shape
         X = X.reshape((s[0]*s[1],s[2], s[3]))
-        Xt = T.fft.rfft(X)
+        Xt = T.fft.rfft(X, norm='ortho')
         snew = Xt.shape
         return  Xt.reshape((s[0], s[1], snew[1], snew[2], 2))
 
@@ -99,8 +99,8 @@ class iRFFTLayer(lasagne.layers.Layer):
 
     def get_output_for(self, X, **kwargs):
         s = X.shape
-        X = X.reshape((s[0]*s[1],s[2], s[3], 2))
-        Xt = T.fft.irfft(X)
+        X2 = X.reshape((s[0]*s[1],s[2], s[3], 2))
+        Xt = T.fft.irfft(X2, norm='ortho')
         snew = Xt.shape
         return  Xt.reshape((s[0], s[1], snew[1], snew[2]))
     

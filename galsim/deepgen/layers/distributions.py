@@ -38,7 +38,7 @@ class ClampLogVarLayer(lasagne.layers.Layer):
 class MergeMeanLayer(lasagne.layers.MergeLayer):
 
     def __init__(self, d_mu, d_logvar, t_mu, t_logvar, **kwargs):
-        super(MergeMeanLayer, self).__init__([d_mu, d_logvar, t_mu, t_logvar], **kwargs)
+        super(self.__class__, self).__init__([d_mu, d_logvar, t_mu, t_logvar], **kwargs)
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
@@ -56,7 +56,7 @@ class MergeMeanLayer(lasagne.layers.MergeLayer):
 class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
     def __init__(self, d_logvar, t_logvar, **kwargs):
-        super(MergeLogVarLayer, self).__init__([d_logvar, t_logvar], **kwargs)
+        super(self.__class__, self).__init__([d_logvar, t_logvar], **kwargs)
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
@@ -104,9 +104,18 @@ class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     def get_output_for(self, inputs, **kwargs):
         z, mean, logvar = inputs
         
+        # First make sure all dimensions with ones are broadcastable
+        dims = []
+        for i,s in enumerate(self.in_logvar_shape):
+            if s == 1:
+                dims.append(i)
+        if len(dims) >0:
+            logvar = T.addbroadcast(logvar, *dims)
+        
         # If logvar is a diagonal, pad it to the right until we match the dimension of x
-        if len(self.in_logvar_shape) < len(self.in_shape):
+        if len(self.in_logvar_shape) < len(self.in_shape):                                  
             logvar = T.shape_padright(logvar, n_ones=(len(self.in_shape) - len(self.in_logvar_shape)))
+
         pz = log_normal2(z, mean, logvar, eps=self.epsilon)
         return pz.sum(axis=range(1,len(self.in_shape)))
 
@@ -115,9 +124,10 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     Computes the log likelihood with a Gaussian model
     """
     
-    def __init__(self, z, mean, log_var, epsilon=1e-7, **kwargs):
+    def __init__(self, z, mean, log_var, epsilon=1e-7, log_var_max=5, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
+        self.log_var_max = log_var_max
         self.in_shape = get_output_shape(z)
         
     def get_output_shape_for(self, input_shapes):
@@ -125,10 +135,16 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     
     def get_output_for(self, inputs, **kwargs):
         z, mean, log_var = inputs
+        
+        
         # Ok, here we assume the logvar to have the same shape as our images
         c = - 0.5 * math.log(2*math.pi)
-        pz = c - log_var/2 - ((x - mean)**2).sum(axis=-1)/ (2 * T.exp(log_var) + self.epsilon)
-        return pz.sum(axis=range(1,len(self.in_shape)))
+        pz = c - log_var/2 - ((z - mean)**2).sum(axis=-1) / (2 * T.exp(log_var) + self.epsilon)
+        
+        # Exclude from likelihood points where the variance is essentially 0
+        pz = T.where(log_var >= self.log_var_max, 0, pz)
+        
+        return pz.sum(axis=range(1,len(self.in_shape[:-1])))
 
 
 class GMLikelihoodLayer(lasagne.layers.MergeLayer):

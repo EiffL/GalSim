@@ -17,7 +17,7 @@ class ladder(object):
     def __init__(self, n_c, n_x, n_y,
                  steps,
                  batch_size=32,
-                 noise_std=1):
+                 diagCovariance=False):
         """
         Initialises the ladder structure
 
@@ -41,16 +41,14 @@ class ladder(object):
         # Variable for the learning rate
         self._lr = T.scalar('lr')
         # Variable for noise standard deviation
-        self._sigma = T.matrix('sigma')
+        self._sigma = T.tensor4('sigma')
 
         # Define input layers
-        self.l_x = InputLayer(shape=(self.batch_size, self.n_c,
-                                     self.n_x, self.n_x),
+        self.l_x = InputLayer(shape=(self.batch_size, self.n_c, self.n_x, self.n_x),
                               input_var=self._x, name='x')
         self.l_y = InputLayer(shape=(self.batch_size, self.n_y),
                               input_var=self._y, name='y')
-        self.l_sigma = InputLayer(shape=(self.batch_size, 1),
-                                  input_var=self._sigma, name='sigma')
+        self.l_sigma = InputLayer(shape=(self.batch_size, self.n_c, 1, 1), input_var=self._sigma, name='sigma')
 
         ### Build and connect network
         # Connect the deterministic upward pass
@@ -74,7 +72,8 @@ class ladder(object):
 
         # Building the cost function
         # Reconstruction error
-        self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma)] # [LogNormalLayer(z=self.l_x, mean=self.output_layer, log_var=self.l_sigma),]
+        self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma, diagCovariance=diagCovariance)]
+        
         # KL divergence of probabilistic layers
         for s in self.steps:
             if s.KL_term is not None:
