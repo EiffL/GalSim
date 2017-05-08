@@ -48,7 +48,7 @@ class ladder(object):
                               input_var=self._x, name='x')
         self.l_y = InputLayer(shape=(self.batch_size, self.n_y),
                               input_var=self._y, name='y')
-        self.l_sigma = InputLayer(shape=(self.batch_size, self.n_c, 1, 1), input_var=self._sigma, name='sigma')
+        self.l_sigma = InputLayer(shape=(self.batch_size, self.n_c, None, None), input_var=self._sigma, name='sigma')
 
         ### Build and connect network
         # Connect the deterministic upward pass

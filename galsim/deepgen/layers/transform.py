@@ -56,7 +56,6 @@ class CropLayer(lasagne.layers.Layer):
         sx = s[-1]/2 - 1
         return  X[:,:,sx - self._size/2: sx + self._size/2,
                       sx - self._size/2: sx + self._size/2]
-    
 
 class RFFTLayer(lasagne.layers.Layer):
     """
@@ -104,3 +103,25 @@ class iRFFTLayer(lasagne.layers.Layer):
         snew = Xt.shape
         return  Xt.reshape((s[0], s[1], snew[1], snew[2]))
     
+
+# "Borrowed" from https://github.com/ajbrock/Neural-Photo-Editor/blob/master/layers.py
+# Subpixel Upsample Layer from (https://arxiv.org/abs/1609.05158)
+# This layer uses a set of r^2 set_subtensor calls to reorganize the tensor in a subpixel-layer upscaling style
+# as done in the ESPCN Magic ony paper for super-resolution.
+# r is the upscale factor.
+# c is the number of output channels.
+class SubpixelLayer(lasagne.layers.Layer):
+    def __init__(self, incoming, r, c, **kwargs):
+        super(self.__class__, self).__init__(incoming, **kwargs)
+        self.r=r # Upscale factor
+        self.c=c # number of output channels
+        
+    def get_output_shape_for(self, input_shape):
+        return (input_shape[0],self.c,self.r*input_shape[2],self.r*input_shape[3])
+
+    def get_output_for(self, input, deterministic=False, **kwargs):
+        out = T.zeros((input.shape[0],self.output_shape[1],self.output_shape[2],self.output_shape[3]))
+        for x in xrange(self.r): # loop across all feature maps belonging to this channel
+            for y in xrange(self.r):
+                out=T.set_subtensor(out[:,:,x::self.r,y::self.r],input[:, self.r*x+y::self.r*self.r,:,:])
+        return out

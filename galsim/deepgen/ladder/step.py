@@ -20,6 +20,7 @@ from ..layers.merge import CondConcatLayer
 from ..distributions import kl_normal2_normal2, log_normal2, log_bernoulli
 
 from ..layers.transform import RFFTLayer, iRFFTLayer
+from ..blocks.deconvolution import deconvolution
 
 import math
 
@@ -88,17 +89,13 @@ class input_step(ladder_step):
         stride = 2 if self.downsample else 1
         input_net = p
         if self.downsample:
-            input_net = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, 
-                                              filter_size=self.filter_size, 
-                                              stride=stride, 
-                                              nonlinearity=identity,
-                                              crop='same',
-                                              output_size=self.n_x)
+            input_net = deconvolution(input_net, num_filters=self.n_filters_in,
+                                      stride=stride, nonlinearity=self.output_nonlinearity)
         else:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size,
-                                    nonlinearity=identity, pad='same')
-        # Apply non linearity on ouput
-        self.top_down_net = NonlinearityLayer(input_net, nonlinearity=self.output_nonlinearity)
+            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, nonlinearity=self.output_nonlinearity, pad='same')
+
+        self.top_down_net = input_net
+
         return self.top_down_net
 
 
@@ -112,7 +109,7 @@ class input_step(ladder_step):
         else:
             out = RFFTLayer(self.top_down_net)
             z = RFFTLayer(self.d_in)
-            return FourierGaussianLikelihoodLayer(z=z, mean=out, log_var=input_logvar)
+            return FourierGaussianLikelihoodLayer(z=z, mean=out, log_var=input_logvar, normalise=False)
 
     def BernoulliLikelihood(self):
         """
@@ -123,13 +120,12 @@ class input_step(ladder_step):
 
 class resnet_step(ladder_step):
 
-    def __init__(self, n_filters=32, latent_dim=0, IAF_sizes=[], downsample=False, prefilter=False, output_nonlinearity=identity):
+    def __init__(self, n_filters=32, latent_dim=0, IAF_sizes=[], downsample=False,  output_nonlinearity=identity):
         """
         Initialise the step
         """
         self.n_filters = n_filters
         self.latent_dim = latent_dim
-        self.prefilter = prefilter
         self.latent_dim = latent_dim
         self.downsample = downsample
         self.IAF_sizes = IAF_sizes
@@ -146,10 +142,7 @@ class resnet_step(ladder_step):
         stride = 2 if self.downsample else 1
 
         # If the input needs to be reshaped in any way we do it first
-        if self.prefilter:
-            input_net = batch_norm(Conv2DLayer(d, num_filters=self.n_filters, filter_size=5, stride=stride, nonlinearity=elu, pad='same', W=he_norm))
-            branch = input_net
-        elif self.n_filters_in != self.n_filters or self.downsample:
+        if self.n_filters_in != self.n_filters or self.downsample:
             input_net = NonlinearityLayer(BatchNormLayer(d), elu)
             branch = input_net
         else:
@@ -206,12 +199,8 @@ class resnet_step(ladder_step):
             # Inference branch
             #
             if self.downsample :
-                branch_posterior = TransposedConv2DLayer(branch,
-                                                        num_filters=2*self.latent_dim,
-                                                        filter_size=3, 
-                                                        stride=stride, nonlinearity=identity,
-                                                        crop='same',
-                                                        output_size=self.n_x,W=he_norm)
+                branch_posterior = deconvolution(branch, num_filters=2*self.latent_dim,
+                                                 stride=stride, nonlinearity=identity)
             else:
                 branch_posterior = Conv2DLayer(branch,
                                             num_filters=2*self.latent_dim,
@@ -252,12 +241,8 @@ class resnet_step(ladder_step):
         # Main branch
         # 
         if self.downsample :
-            branch = TransposedConv2DLayer(branch,
-                                            num_filters=self.n_filters+self.latent_dim,
-                                            filter_size=3,
-                                            stride=stride, nonlinearity=identity,
-                                            crop='same',
-                                            output_size=self.n_x,W=he_norm)
+            branch = deconvolution(branch, num_filters=self.n_filters+self.latent_dim,
+                                            stride=stride, nonlinearity=identity)
         else:
             branch = Conv2DLayer(branch,
                                 num_filters=self.n_filters+self.latent_dim,
@@ -293,15 +278,11 @@ class resnet_step(ladder_step):
                              W=he_norm)
 
         if self.n_filters_in != self.n_filters or self.downsample:
-            shortcut = TransposedConv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=1, nonlinearity=None,  stride=stride, W=he_norm, crop='same',
-            output_size=self.n_x)
+            shortcut = deconvolution(input_net, num_filters=self.n_filters_in, nonlinearity=identity,  stride=stride)
         else:
             shortcut = input_net
 
         net = ElemwiseSumLayer([branch, shortcut])
-
-        if self.prefilter:
-            net = Conv2DLayer(net, num_filters=self.n_filters_in, filter_size=5, stride=1, nonlinearity=self.output_nonlinearity, pad='same', W=he_norm)
 
         self.top_down_net = net
         return self.top_down_net

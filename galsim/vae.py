@@ -108,51 +108,40 @@ class ResNetVAE(GenerativeGalaxyModel):
 
         # Create the architecture of the ladder
         p = gmm_prior_step(n_units=[256, 256],
+                    IAF_sizes=[[128,128],[128,128]],
                     n_hidden=n_hidden,
-                    IAF_sizes=[],#[128,128],[128,128]],
                     n_gaussians=512)
 
-        # Input layer
-        input_0 = input_step(n_filters=16, output_nonlinearity=sigmoid,
-                             downsample=False)
+        # Input layer, performs a downsampling
+        input_0 = input_step(n_filters=64, output_nonlinearity=None)
 
         # First resnet layer, 64x64
-        resnet_1 = resnet_step(n_filters=32,
-                               latent_dim=8,
+        resnet_1 = resnet_step(n_filters=64,
+                               latent_dim=16,
+                               IAF_sizes=[[32,32],[32,32]],
                                downsample=True)
-                               #IAF_sizes=[[32,32],[32,32]])
 
-        resnet_2 = resnet_step(n_filters=32,
-                            latent_dim=8,
-                            downsample=True)
-                            # IAF_sizes=[[32,32],[32,32]],
-        ## Input at 32x32
-        resnet_3 = resnet_step(n_filters=32,
-                               latent_dim=8,
+        # Input at 32x32 
+        resnet_2 = resnet_step(n_filters=128,
+                               latent_dim=32,
+                               IAF_sizes=[[64,64],[64,64]],
                                downsample=True)
-                                #IAF_sizes=[[64,64],[64,64]],
-                                #downsample=True)
 
-        ## Input at 16x16
-        #resnet_4 = resnet_step(n_filters=256,
-                                #latent_dim=128,
-                                #IAF_sizes=[[128,128],[128,128]],
-                                #downsample=True)
-        ## Input at 8x8
-        #resnet_5 = resnet_step(n_filters=256,
-                                #latent_dim=128,
-                                #IAF_sizes=[[128,128],[128,128]],
-                                #downsample=True)
+        # Input at 16x16
+        resnet_3 = resnet_step(n_filters=256,
+                               latent_dim=64,
+                               downsample=True,
+                               IAF_sizes=[[128,128],[128,128]])
 
-        # Input at 4x4
-        dense_5 = dens_step(n_units=256)
+        # Input at 8x8
+        dense_4 = dens_step(n_units=256)
 
         # Build the ladder
         self.model = ladder(n_bands, stamp_size,
                             len(quantities),
-                            [input_0, resnet_1, resnet_2, resnet_3, dense_5, p],
+                            [input_0, resnet_1, resnet_2, resnet_3, dense_4, p],
                             batch_size=batch_size,
-                            diagCovariance=True)
+                            diagCovariance=False)
 
         # Default normalisation variables
         self.x_scaling = 1
@@ -196,7 +185,7 @@ class ResNetVAE(GenerativeGalaxyModel):
         
         # Normalise the input image using the median noise variance
         # to make training easier for the network
-        # self.x_scaling = np.median(np.sqrt(real_cat.variance[valid_index]))
+        self.x_scaling = 0.025#np.median(np.sqrt(real_cat.variance[valid_index]))
         
         # Normalise y parameters by removing the mean and dividing by std
         self.y_scaling = np.ones(len(self.quantities))
@@ -258,11 +247,14 @@ class ResNetVAE(GenerativeGalaxyModel):
                 ims = [elem[0] for elem in res]
                 pss = [elem[1] for elem in res]
                 xdata[:,0,:,:] = np.stack(ims)
-                #sdata[:,0,:,:] = np.stack(pss)
+                sdata[:,0,:,:] = np.stack(pss)
                 
                 #if vmax is not None:
                     #xdata = np.clip(xdata, -vmax, vmax)
-                #xdata = xdata / self.x_scaling
+                    
+                # Apply normalisation and range compression
+                xdata = np.arcsinh(xdata / (50. * self.x_scaling) ) * 50
+                sdata = sdata - 2.*np.log(self.x_scaling)
                 
                 # Start computation of the next batch of images
                 if b < (batch_per_epoch - 1):
@@ -273,7 +265,7 @@ class ResNetVAE(GenerativeGalaxyModel):
                 ## Perform update
                 train_err, logpx, klp = self.model._trainer(floatX(xdata),
                                                             floatX(ydata),
-                                                            floatX(sigma_data),# floatX(sdata),
+                                                            floatX(sdata),
                                                             floatX(learning_rate))
 
                 acc_train_err += train_err

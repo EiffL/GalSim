@@ -124,11 +124,12 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     Computes the log likelihood with a Gaussian model
     """
     
-    def __init__(self, z, mean, log_var, epsilon=1e-7, log_var_max=5, **kwargs):
+    def __init__(self, z, mean, log_var, epsilon=1e-7, log_var_max=5, normalise=True, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.log_var_max = log_var_max
         self.in_shape = get_output_shape(z)
+        self.normalise = normalise
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
@@ -138,8 +139,10 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
         
         
         # Ok, here we assume the logvar to have the same shape as our images
-        c = - 0.5 * math.log(2*math.pi)
-        pz = c - log_var/2 - ((z - mean)**2).sum(axis=-1) / (2 * T.exp(log_var) + self.epsilon)
+        pz = - ((z - mean)**2).sum(axis=-1) / (2 * T.exp(log_var) + self.epsilon)
+        if self.normalise:
+            c = - 0.5 * math.log(2*math.pi)
+            pz = pz + c - log_var/2
         
         # Exclude from likelihood points where the variance is essentially 0
         pz = T.where(log_var >= self.log_var_max, 0, pz)
