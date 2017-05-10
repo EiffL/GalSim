@@ -113,7 +113,9 @@ class ResNetVAE(GenerativeGalaxyModel):
                     n_gaussians=512)
 
         # Input layer, performs a downsampling
-        input_0 = input_step(n_filters=64, output_nonlinearity=None)
+        input_0 = input_step(n_filters=64,
+			     output_nonlinearity=None,
+			     downsample=True)
 
         # First resnet layer, 64x64
         resnet_1 = resnet_step(n_filters=64,
@@ -185,7 +187,7 @@ class ResNetVAE(GenerativeGalaxyModel):
         
         # Normalise the input image using the median noise variance
         # to make training easier for the network
-        self.x_scaling = 0.025#np.median(np.sqrt(real_cat.variance[valid_index]))
+        self.x_scaling = np.median(np.sqrt(real_cat.variance[valid_index]))
         
         # Normalise y parameters by removing the mean and dividing by std
         self.y_scaling = np.ones(len(self.quantities))

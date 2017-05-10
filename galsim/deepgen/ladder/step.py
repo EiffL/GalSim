@@ -259,7 +259,7 @@ class resnet_step(ladder_step):
             self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
             self.log_pz = GaussianLikelihoodLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
             #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
-            self.KL_term = KLLayer(self.log_pz, self.log_qz)
+            self.KL_term = KLLayer(self.log_pz, self.log_qz, clip_negative=False)
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
             branch = CondConcatLayer(branch, self.qz_smpl, self.pz_smpl)
