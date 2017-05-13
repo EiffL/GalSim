@@ -23,10 +23,9 @@ class GaussianSampleLayer(lasagne.layers.MergeLayer):
 
     """
 
-    def __init__(self, mean, log_var,
-                 seed=lasagne.random.get_rng().randint(1, 2147462579), **kwargs):
+    def __init__(self, mean, log_var, rng, **kwargs):
         super(GaussianSampleLayer, self).__init__([mean, log_var], **kwargs)
-        self._rng = RandomStreams(seed)
+        self._rng = rng
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
@@ -57,11 +56,10 @@ class GMSampleLayer(lasagne.layers.MergeLayer):
         Seed for the random number generator
     """
 
-    def __init__(self, mean, log_var, weight,
-                 seed=lasagne.random.get_rng().randint(1, 2147462579),
+    def __init__(self, mean, log_var, weight, rng,
                  **kwargs):
         super(GMSampleLayer, self).__init__([mean, log_var, weight], **kwargs)
-        self._rng = RandomStreams(seed)
+        self._rng = rng
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0][0:2]
@@ -92,12 +90,11 @@ class BernoulliSampleLayer(lasagne.layers.Layer):
     seed : Helper function to change the random seed after init is called
     """
 
-    def __init__(self, mean,
-                 seed=lasagne.random.get_rng().randint(1, 2147462579),
+    def __init__(self, mean, rng,
                  **kwargs):
-        super(BernoulliSampleLayer, self).__init__(mean, **kwargs)
+        super(BernoulliSampleLayer, self).__init__(mean,  **kwargs)
 
-        self._srng = RandomStreams(seed)
+        self._srng = rng
 
     def seed(self, seed=lasagne.random.get_rng().randint(1, 2147462579)):
         self._srng.seed(seed)

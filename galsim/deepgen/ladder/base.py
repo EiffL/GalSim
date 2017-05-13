@@ -3,6 +3,7 @@ sys.setrecursionlimit(10000)
 
 import theano
 import theano.tensor as T
+from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 import numpy as np
 
@@ -42,6 +43,8 @@ class ladder(object):
         self._lr = T.scalar('lr')
         # Variable for noise standard deviation
         self._sigma = T.tensor4('sigma')
+        # Random number stream
+        self._rng = RandomStreams(seed=234)
 
         # Define input layers
         self.l_x = InputLayer(shape=(self.batch_size, self.n_c, self.n_x, self.n_x),
@@ -55,7 +58,7 @@ class ladder(object):
         d_mu = self.l_x
         print("input shape", get_output_shape(d_mu))
         for s in self.steps:
-            d_mu = s.connect_upward(d_mu, self.l_y)
+            d_mu = s.connect_upward(d_mu, self.l_y, self._rng)
             print("bottom-up", get_output_shape(d_mu))
 
         # The last step of the ladder should be the posterior/prior element
@@ -64,7 +67,7 @@ class ladder(object):
         # Connect the probabilistic downward pass
         p = self.code_layer
         for i, s in enumerate(self.steps[::-1]):
-            p = s.connect_downward(p, self.l_y)
+            p = s.connect_downward(p, self.l_y, self._rng)
             print("top-down", get_output_shape(p))
 
         # Output of the ladder
@@ -83,7 +86,7 @@ class ladder(object):
         
         # Outputs for training
         inputs = {self.l_x: self._x, self.l_y: self._y, self.l_sigma: self._sigma}
-        LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1]], inputs=inputs)
+        LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1], inputs=inputs)
 
         # Get trainable parameters and generate updates
         params = get_all_params([self.cost_layer], trainable=True)
@@ -100,9 +103,9 @@ class ladder(object):
                                         updates=updates)
 
         # Get outputs from the generative network for a given code TODO: Find a way to remove dependence on x
-        inputs = {self.l_x: self._x, self.code_layer: self._z, self.l_y: self._y}
+        inputs = {self.code_layer: self._z, self.l_y: self._y}
         x_smpl = get_output(self.output_layer, inputs=inputs, deterministic=True, alternative_path=True)
-        self._decoder = theano.function([self._x, self._z, self._y], x_smpl)
+        self._decoder = theano.function([self._z, self._y], x_smpl)
 
         # Get outputs from the recognition network
         inputs = {self.l_x: self._x, self.l_y: self._y}
@@ -189,7 +192,7 @@ class ladder(object):
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(n_samples/self.batch_size)):
-            X = sampler(floatX(np.zeros((self.batch_size,self.n_c,self.n_x,self.n_x))), floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
+            X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
                         floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(X)
 
@@ -200,7 +203,7 @@ class ladder(object):
             hdata[:ni] = h[i*self.batch_size:]
             ydata = np.zeros((self.batch_size, y.shape[1]))
             ydata[:ni] = y[i*self.batch_size:]
-            X = sampler(floatX(np.zeros((self.batch_size,self.n_c,self.n_x,self.n_x))),floatX(hdata),  floatX(ydata))
+            X = sampler(floatX(hdata),  floatX(ydata))
                 
             res.append(X[:ni])
 

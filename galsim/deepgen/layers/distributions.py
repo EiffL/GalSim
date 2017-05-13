@@ -23,7 +23,7 @@ class ClampLogVarLayer(lasagne.layers.Layer):
 
     """
 
-    def __init__(self, input, scale=1.0, shift=1.0001, **kwargs):
+    def __init__(self, input, scale=1.0, shift=1.00001, **kwargs):
         super(self.__class__, self).__init__(input, **kwargs)
         self._scale = scale
         self._shift = shift
@@ -92,11 +92,13 @@ class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     Computes the log likelihood with a Gaussian model
     """
     
-    def __init__(self, z, mean, log_var, epsilon=1e-7, **kwargs):
+    def __init__(self, z, mean, log_var, epsilon=0, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.in_shape = get_output_shape(z)
         self.in_logvar_shape = get_output_shape(log_var)
+        print self.in_shape
+        print self.in_logvar_shape
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]

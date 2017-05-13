@@ -32,7 +32,7 @@ class ladder_step():
     """
 
     @abstractmethod
-    def connect_upward(self, d, y):
+    def connect_upward(self, d, y, rng=None):
         """
         Connects the bottom-up part of the ladder
         """
@@ -40,7 +40,7 @@ class ladder_step():
 
 
     @abstractmethod
-    def connect_downward(self, p, y):
+    def connect_downward(self, p, y, rng=None):
         """
         Connects the top-down part of the ladder
         """
@@ -61,7 +61,7 @@ class input_step(ladder_step):
         self.output_nonlinearity = output_nonlinearity
         self.filter_size = filter_size
         
-    def connect_upward(self, d, y):
+    def connect_upward(self, d, y, rng=None):
         self.d_in = d
         self.n_x = get_output_shape(d)[2]    
         self.n_filters_in = get_output_shape(d)[1]    
@@ -78,7 +78,7 @@ class input_step(ladder_step):
         return self.bottom_up_net
 
             
-    def connect_downward(self, p, y):
+    def connect_downward(self, p, y, rng=None):
         # Deterministic layer:
         self.log_pz = None
         self.pz_smpl = None
@@ -132,7 +132,7 @@ class resnet_step(ladder_step):
         self.output_nonlinearity = output_nonlinearity
 
 
-    def connect_upward(self, d, y):
+    def connect_upward(self, d, y, rng=None):
         he_norm = HeNormal(gain='relu')
         self.d_in = d
         
@@ -179,7 +179,7 @@ class resnet_step(ladder_step):
         return self.bottom_up_net
 
 
-    def connect_downward(self, p, y):
+    def connect_downward(self, p, y, rng):
         he_norm = HeNormal(gain='relu')
         
         # Get the dimension of the input and check if downsampling is requested 
@@ -217,7 +217,7 @@ class resnet_step(ladder_step):
             self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
             
             # Sample at the origin of the IAF chain
-            self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar)
+            self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, name='qz')
             
             # Add the Autoregressive layers
             z = self.qz0
@@ -256,9 +256,8 @@ class resnet_step(ladder_step):
             branch_prior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
             self.pz_mu = SliceLayer(branch_prior, indices=slice(0,self.latent_dim), axis=1)
             self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
-            self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar)
+            self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, rng=rng, name='pz')
             self.log_pz = GaussianLikelihoodLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
-            #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
             self.KL_term = KLLayer(self.log_pz, self.log_qz, clip_negative=False)
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
@@ -298,7 +297,7 @@ class dens_step(ladder_step):
         self.n_units = n_units
         self.nonlinearity = nonlinearity
     
-    def connect_upward(self, d, y):
+    def connect_upward(self, d, y, rng=None):
         he_norm = HeNormal(gain='relu')
         
         # Saves the input layer shape for latter
@@ -326,7 +325,7 @@ class dens_step(ladder_step):
         return self.bottom_up_net
 
 
-    def connect_downward(self, p, y):
+    def connect_downward(self, p, y, rng=None):
         he_norm = HeNormal(gain='relu')
 
         self.qz_smpl = None
@@ -367,7 +366,7 @@ class gmm_prior_step(ladder_step):
         self.IAF_sizes = IAF_sizes
         self.apply_nonlinearity = apply_nonlinearity
 
-    def connect_upward(self, d, y):
+    def connect_upward(self, d, y, rng):
         """
         Computes the posterior approximation and sample from it
         """
@@ -382,7 +381,7 @@ class gmm_prior_step(ladder_step):
         self.qz_logvar= ClampLogVarLayer(DenseLayer(input_net, num_units=self.n_hidden, nonlinearity=None))
 
         # Sample from the Gaussian distribution
-        self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, name='z0_sample')
+        self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, rng=rng, name='z0_sample')
         
         # Add the Autoregressive layers
         z = self.qz0
@@ -398,7 +397,7 @@ class gmm_prior_step(ladder_step):
         return self.qz_smpl
 
 
-    def connect_downward(self, p, y):
+    def connect_downward(self, p, y, rng):
         """
         Computes the conditional prior 
         """
@@ -427,7 +426,7 @@ class gmm_prior_step(ladder_step):
         self.pz_w = DenseLayer(network, num_units=self.n_gaussians, nonlinearity=softmax, name='pw_log_var')
 
         # Prior samples
-        self.pz_smpl = GMSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w, name='pz')
+        self.pz_smpl = GMSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w, rng=rng, name='pz')
         
         self.log_pz = GMLikelihoodLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         

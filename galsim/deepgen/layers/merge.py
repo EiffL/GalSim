@@ -49,6 +49,6 @@ class CondConcatLayer(lasagne.layers.MergeLayer):
     def get_output_for(self, inputs, alternative_path=False, **kwargs):
         main, branch_0, branch_1 = inputs
         if alternative_path:
-            return T.concatenate([main, branch_0], axis=self.axis)
-        else:
             return T.concatenate([main, branch_1], axis=self.axis)
+        else:
+            return T.concatenate([main, branch_0], axis=self.axis)
