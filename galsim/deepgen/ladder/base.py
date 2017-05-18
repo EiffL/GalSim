@@ -86,7 +86,7 @@ class ladder(object):
         
         # Outputs for training
         inputs = {self.l_x: self._x, self.l_y: self._y, self.l_sigma: self._sigma}
-        LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1], inputs=inputs)
+        LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1]], inputs=inputs)
 
         # Get trainable parameters and generate updates
         params = get_all_params([self.cost_layer], trainable=True)

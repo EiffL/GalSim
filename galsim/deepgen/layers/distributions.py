@@ -37,8 +37,9 @@ class ClampLogVarLayer(lasagne.layers.Layer):
 
 class MergeMeanLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, **kwargs):
+    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, conjugate=False, **kwargs):
         super(self.__class__, self).__init__([d_mu, d_logvar, t_mu, t_logvar], **kwargs)
+        self.conjugate = conjugate
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
@@ -47,27 +48,36 @@ class MergeMeanLayer(lasagne.layers.MergeLayer):
 
         d_mu, d_logvar, t_mu, t_logvar = inputs
 
-        invsig2_t = T.exp( - t_logvar )
-        invsig2_d = T.exp( - d_logvar )
+        if self.conjugate:
+            invsig2_t = T.exp( - t_logvar )
+            invsig2_d = T.exp( - d_logvar )
 
-        q_mu = (t_mu*invsig2_t + d_mu*invsig2_d)/(invsig2_t + invsig2_d)
+            q_mu = (t_mu*invsig2_t + d_mu*invsig2_d)/(invsig2_t + invsig2_d)
+        else:
+            q_mu = t_mu + d_mu
         return q_mu
 
 class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_logvar, t_logvar, **kwargs):
+    def __init__(self, d_logvar, t_logvar, conjugate=False, **kwargs):
         super(self.__class__, self).__init__([d_logvar, t_logvar], **kwargs)
+        self.conjugate = conjugate
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
 
     def get_output_for(self, inputs, **kwargs):
         d_logvar, t_logvar = inputs
+    
+        if self.conjugate:
 
-        invsig2_t = T.exp(- t_logvar)
-        invsig2_d = T.exp(- d_logvar)
+            invsig2_t = T.exp(- t_logvar)
+            invsig2_d = T.exp(- d_logvar)
 
-        return  - T.log(invsig2_t + invsig2_d)
+            return  - T.log(invsig2_t + invsig2_d)
+        else:
+            return t_logvar + d_logvar
+
 
 class BernoulliLikelihoodLayer(lasagne.layers.MergeLayer):
     """
@@ -97,9 +107,7 @@ class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
         self.epsilon = epsilon
         self.in_shape = get_output_shape(z)
         self.in_logvar_shape = get_output_shape(log_var)
-        print self.in_shape
-        print self.in_logvar_shape
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
     
@@ -173,20 +181,17 @@ class KLLayer(lasagne.layers.MergeLayer):
     Merges log likelihoods from prior and posterior into a KL divergence
     """
         
-    def __init__(self, log_pz, log_qz, negative=True, clip_negative=True, **kwargs):
+    def __init__(self, log_pz, log_qz, negative=True,  **kwargs):
         super(self.__class__, self).__init__([log_pz, log_qz], **kwargs)
         self.negative = negative
-        self.clip_negative = clip_negative
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
     
     def get_output_for(self, inputs, **kwargs):
         log_pz, log_qz = inputs
-        if self.clip_negative:
-            kl = T.nnet.relu(log_qz - log_pz)
-        else:
-            kl = log_qz - log_pz
+        
+        kl = log_qz - log_pz
         if self.negative:
             return - kl
         else:

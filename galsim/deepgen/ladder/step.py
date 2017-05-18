@@ -217,7 +217,7 @@ class resnet_step(ladder_step):
             self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
             
             # Sample at the origin of the IAF chain
-            self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, name='qz')
+            self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, rng=rng, name='qz')
             
             # Add the Autoregressive layers
             z = self.qz0
@@ -258,7 +258,7 @@ class resnet_step(ladder_step):
             self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
             self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, rng=rng, name='pz')
             self.log_pz = GaussianLikelihoodLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
-            self.KL_term = KLLayer(self.log_pz, self.log_qz, clip_negative=False)
+            self.KL_term = KLLayer(self.log_pz, self.log_qz)
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
             branch = CondConcatLayer(branch, self.qz_smpl, self.pz_smpl)
@@ -431,7 +431,7 @@ class gmm_prior_step(ladder_step):
         self.log_pz = GMLikelihoodLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         
         #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
-        self.KL_term = KLLayer(self.log_pz, self.log_qz, clip_negative=False)
+        self.KL_term = KLLayer(self.log_pz, self.log_qz)
         self.top_down_net = p
         return self.top_down_net
 
