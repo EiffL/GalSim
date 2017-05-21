@@ -93,7 +93,7 @@ class ladder(object):
 
         # Compute gradients
         grads = T.grad(- LL.mean(), params)
-        clip_grad = 10.
+        clip_grad = 1.
         cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
         updates = adam(cgrads, params, learning_rate=self._lr)
     

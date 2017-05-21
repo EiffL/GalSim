@@ -7,7 +7,7 @@ import theano
 
 from lasagne.layers import get_output_shape
 
-from ..distributions import log_normal2, log_gm2, log_bernoulli
+from ..distributions import log_normal2, log_gm2, log_bernoulli, kl_normal2_normal2, kl_normal2_gm2
 
 class ClampLogVarLayer(lasagne.layers.Layer):
     """
@@ -37,7 +37,7 @@ class ClampLogVarLayer(lasagne.layers.Layer):
 
 class MergeMeanLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, conjugate=False, **kwargs):
+    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, conjugate=True, **kwargs):
         super(self.__class__, self).__init__([d_mu, d_logvar, t_mu, t_logvar], **kwargs)
         self.conjugate = conjugate
 
@@ -59,7 +59,7 @@ class MergeMeanLayer(lasagne.layers.MergeLayer):
 
 class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_logvar, t_logvar, conjugate=False, **kwargs):
+    def __init__(self, d_logvar, t_logvar, conjugate=True, **kwargs):
         super(self.__class__, self).__init__([d_logvar, t_logvar], **kwargs)
         self.conjugate = conjugate
 
@@ -197,3 +197,47 @@ class KLLayer(lasagne.layers.MergeLayer):
         else:
             return kl
     
+class KLLayerGaussian(lasagne.layers.MergeLayer):
+    """
+    Merges log likelihoods from prior and posterior into a KL divergence
+    """
+        
+    def __init__(self, mean1, log_var1, mean2, log_var2, negative=True,  **kwargs):
+        super(self.__class__, self).__init__([mean1, log_var1, mean2, log_var2], **kwargs)
+        self.negative = negative
+        
+    def get_output_shape_for(self, input_shapes):
+        return [input_shapes[0]]
+    
+    def get_output_for(self, inputs, **kwargs):
+        mean1, log_var1, mean2, log_var2 = inputs
+        
+        kl = kl_normal2_normal2(mean1, log_var1, mean2, log_var2)
+        kl = kl.flatten(ndim=2).sum(axis=1)
+        
+        if self.negative:
+            return - kl
+        else:
+            return kl
+        
+class KLLayerGaussianMixture(lasagne.layers.MergeLayer):
+    """
+    Merges log likelihoods from prior and posterior into a KL divergence
+    """
+        
+    def __init__(self, mean1, log_var1, mean2, log_var2, weights2, negative=True,  **kwargs):
+        super(self.__class__, self).__init__([mean1, log_var1, mean2, log_var2, weights2], **kwargs)
+        self.negative = negative
+        
+    def get_output_shape_for(self, input_shapes):
+        return [input_shapes[0]]
+    
+    def get_output_for(self, inputs, **kwargs):
+        mean1, log_var1, mean2, log_var2, weights2 = inputs
+        
+        kl = kl_normal2_gm2(mean1, log_var1, mean2, log_var2, weights2)
+        
+        if self.negative:
+            return - kl
+        else:
+            return kl

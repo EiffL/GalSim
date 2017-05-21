@@ -15,7 +15,7 @@ from lasagne.layers import BatchNormLayer, NonlinearityLayer, SliceLayer, Elemwi
 from ..layers.sample import GaussianSampleLayer, BernoulliSampleLayer, GMSampleLayer
 from ..layers.ar import ARConv2DLayer
 from ..blocks.MADE import MADE
-from ..layers.distributions import ClampLogVarLayer, MergeMeanLayer, MergeLogVarLayer, GaussianLikelihoodLayer, BernoulliLikelihoodLayer, GMLikelihoodLayer, FourierGaussianLikelihoodLayer, KLLayer
+from ..layers.distributions import ClampLogVarLayer, MergeMeanLayer, MergeLogVarLayer, GaussianLikelihoodLayer, BernoulliLikelihoodLayer, GMLikelihoodLayer, FourierGaussianLikelihoodLayer, KLLayer, KLLayerGaussian, KLLayerGaussianMixture
 from ..layers.merge import CondConcatLayer
 from ..distributions import kl_normal2_normal2, log_normal2, log_bernoulli
 
@@ -209,12 +209,12 @@ class resnet_step(ladder_step):
                                             nonlinearity=identity,
                                             pad='same',
                                             W=he_norm)
-            tz_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
-            tz_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(-self.latent_dim, None), axis=1))
+            self.tz_mu = SliceLayer(branch_posterior, indices=slice(0,self.latent_dim), axis=1)
+            self.tz_logvar = ClampLogVarLayer(SliceLayer(branch_posterior, indices=slice(-self.latent_dim, None), axis=1))
 
             # Combine top-down inference information
-            self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, tz_mu, tz_logvar)
-            self.qz_logvar = MergeLogVarLayer(self.d_logvar, tz_logvar)
+            self.qz_mu = MergeMeanLayer(self.d_mu, self.d_logvar, self.tz_mu, self.tz_logvar)
+            self.qz_logvar = MergeLogVarLayer(self.d_logvar, self.tz_logvar)
             
             # Sample at the origin of the IAF chain
             self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, rng=rng, name='qz')
@@ -241,11 +241,11 @@ class resnet_step(ladder_step):
         # Main branch
         # 
         if self.downsample :
-            branch = deconvolution(branch, num_filters=self.n_filters+self.latent_dim,
+            branch = deconvolution(branch, num_filters=self.n_filters-self.latent_dim,
                                             stride=stride, nonlinearity=identity)
         else:
             branch = Conv2DLayer(branch,
-                                num_filters=self.n_filters+self.latent_dim,
+                                num_filters=self.n_filters-self.latent_dim,
                                 filter_size=3, 
                                 stride=stride,
                                 nonlinearity=identity,
@@ -254,12 +254,27 @@ class resnet_step(ladder_step):
         if self.latent_dim > 0:
             # Define step prior
             branch_prior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
+            
+            # Mixing with info from the top-down posterior branch
+            branch_prior = ConcatLayer( [NonlinearityLayer(branch_prior, elu), 
+                                         NonlinearityLayer(branch_posterior, elu)] )
+            branch_prior = Conv2DLayer(branch_prior,
+                                num_filters=2*self.latent_dim,
+                                filter_size=3, 
+                                nonlinearity=identity,
+                                pad='same',
+                                W=he_norm)
             self.pz_mu = SliceLayer(branch_prior, indices=slice(0,self.latent_dim), axis=1)
             self.pz_logvar = ClampLogVarLayer(SliceLayer(branch_prior, indices=slice(-self.latent_dim, None), axis=1))
             self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, rng=rng, name='pz')
             self.log_pz = GaussianLikelihoodLayer(z=self.qz_smpl, mean=self.pz_mu, log_var=self.pz_logvar)
-            self.KL_term = KLLayer(self.log_pz, self.log_qz)
-            branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
+            
+            # If the IAF is not used, evaluate the KL divergence analytically
+            if len(self.IAF_sizes) == 0:
+                self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
+            else:
+                self.KL_term = KLLayer(self.log_pz, self.log_qz)
+            #branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
             branch = CondConcatLayer(branch, self.qz_smpl, self.pz_smpl)
         else:
@@ -430,8 +445,11 @@ class gmm_prior_step(ladder_step):
         
         self.log_pz = GMLikelihoodLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar, weight=self.pz_w)
         
-        #self.KL_term = ElemwiseSumLayer([self.log_pz, self.log_qz], coeffs=[1,-1])
-        self.KL_term = KLLayer(self.log_pz, self.log_qz)
+        # If the IAF is not used, evaluate the KL divergence analytically
+        if len(self.IAF_sizes) == 0:
+            self.KL_term = KLLayerGaussianMixture(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar, self.pz_w)
+        else:
+            self.KL_term = KLLayer(self.log_pz, self.log_qz)
         self.top_down_net = p
         return self.top_down_net
 
