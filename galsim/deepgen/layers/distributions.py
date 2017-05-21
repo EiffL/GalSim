@@ -37,7 +37,7 @@ class ClampLogVarLayer(lasagne.layers.Layer):
 
 class MergeMeanLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, conjugate=True, **kwargs):
+    def __init__(self, d_mu, d_logvar, t_mu, t_logvar, conjugate=False, **kwargs):
         super(self.__class__, self).__init__([d_mu, d_logvar, t_mu, t_logvar], **kwargs)
         self.conjugate = conjugate
 
@@ -59,7 +59,7 @@ class MergeMeanLayer(lasagne.layers.MergeLayer):
 
 class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
-    def __init__(self, d_logvar, t_logvar, conjugate=True, **kwargs):
+    def __init__(self, d_logvar, t_logvar, conjugate=False, **kwargs):
         super(self.__class__, self).__init__([d_logvar, t_logvar], **kwargs)
         self.conjugate = conjugate
 
