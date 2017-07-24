@@ -6,6 +6,7 @@ import theano.tensor as T
 import theano
 
 from lasagne.layers import get_output_shape
+from lasagne.utils import floatX
 
 from ..distributions import log_normal2, log_gm2, log_bernoulli, kl_normal2_normal2, kl_normal2_gm2
 
@@ -134,7 +135,7 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     Computes the log likelihood with a Gaussian model
     """
     
-    def __init__(self, z, mean, log_var, epsilon=1e-7, log_var_max=5, normalise=True, **kwargs):
+    def __init__(self, z, mean, log_var, epsilon=0, log_var_max=5, normalise=True, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.log_var_max = log_var_max
@@ -181,9 +182,10 @@ class KLLayer(lasagne.layers.MergeLayer):
     Merges log likelihoods from prior and posterior into a KL divergence
     """
         
-    def __init__(self, log_pz, log_qz, negative=True,  **kwargs):
+    def __init__(self, log_pz, log_qz, negative=True, factor=1,  **kwargs):
         super(self.__class__, self).__init__([log_pz, log_qz], **kwargs)
         self.negative = negative
+        self.factor = factor
         
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
@@ -191,7 +193,7 @@ class KLLayer(lasagne.layers.MergeLayer):
     def get_output_for(self, inputs, **kwargs):
         log_pz, log_qz = inputs
         
-        kl = log_qz - log_pz
+        kl = floatX(self.factor) *( log_qz - log_pz)
         if self.negative:
             return - kl
         else:

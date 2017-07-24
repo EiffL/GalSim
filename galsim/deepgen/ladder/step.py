@@ -273,7 +273,7 @@ class resnet_step(ladder_step):
             if len(self.IAF_sizes) == 0:
                 self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
             else:
-                self.KL_term = KLLayer(self.log_pz, self.log_qz)
+                self.KL_term = KLLayer(self.log_pz, self.log_qz, factor=10.)
             #branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
             ## Merge samples from the posterior into the main branch
             branch = CondConcatLayer(branch, self.qz_smpl, self.pz_smpl)

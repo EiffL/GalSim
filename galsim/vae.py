@@ -91,7 +91,7 @@ class ResNetVAE(GenerativeGalaxyModel):
     def __init__(self,
                  stamp_size,
                  quantities=[],
-                 batch_size=64,
+                 batch_size=128,
                  n_bands=1,
                  pixel_scale=0.03,
                  model_params=None):
@@ -108,7 +108,6 @@ class ResNetVAE(GenerativeGalaxyModel):
 
         # Create the architecture of the ladder
         p = gmm_prior_step(n_units=[256, 256],
-                    IAF_sizes=[[128,128],[128,128]],
                     n_hidden=n_hidden,
                     n_gaussians=512)
 
@@ -117,31 +116,33 @@ class ResNetVAE(GenerativeGalaxyModel):
 			     output_nonlinearity=None,
 			     downsample=True)
 
-        # First resnet layer, 64x64
+        # First resnet layer, 32x32
         resnet_1 = resnet_step(n_filters=64,
-                               latent_dim=16,
-                               IAF_sizes=[[32,32],[32,32]],
+                               latent_dim=0,
                                downsample=True)
-
-        # Input at 32x32 
+        
+        # Input at 16x16 
         resnet_2 = resnet_step(n_filters=128,
-                               latent_dim=32,
-                               IAF_sizes=[[64,64],[64,64]],
-                               downsample=True)
-
-        # Input at 16x16
-        resnet_3 = resnet_step(n_filters=256,
                                latent_dim=64,
-                               downsample=True,
-                               IAF_sizes=[[128,128],[128,128]])
+                               IAF_sizes=[[128], [128], [128], [128]],
+                               downsample=True)
+        # Input at 8x8
+        resnet_3 = resnet_step(n_filters=256,
+                               latent_dim=0,
+                               downsample=False)
+
+        resnet_4 = resnet_step(n_filters=256,
+                               latent_dim=128,
+                               IAF_sizes=[[256], [256], [256], [256]],
+                               downsample=True)
 
         # Input at 8x8
-        dense_4 = dens_step(n_units=256)
+        dense_5 = dens_step(n_units=256)
 
         # Build the ladder
         self.model = ladder(n_bands, stamp_size,
                             len(quantities),
-                            [input_0, resnet_1, resnet_2, resnet_3, dense_4, p],
+                            [input_0, resnet_1, resnet_2, resnet_3, resnet_4, dense_5, p],
                             batch_size=batch_size,
                             diagCovariance=False)
 
