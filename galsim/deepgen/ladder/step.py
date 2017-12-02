@@ -477,6 +477,7 @@ class gaussian_prior_step(ladder_step):
         """
         self.d_in = d
         self.input_shape = get_output_shape(d)
+        he_norm = HeNormal(gain='relu')
 
         if self.apply_nonlinearity:
             input_net = NonlinearityLayer(BatchNormLayer(d), elu)
@@ -518,6 +519,7 @@ class gaussian_prior_step(ladder_step):
         """
 
         self.batch_size = get_output_shape(p)[0]
+        he_norm = HeNormal(gain='relu')
 
         network = y
         for i in range(len(self.n_units)):
