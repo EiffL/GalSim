@@ -80,12 +80,9 @@ class vaeGAN(object):
 
         ldist = 1. / self._sigma_q**2 * T.log(1 + (zp - zt)**2)
 
-        loss_crit = 0.3*(binary_crossentropy(c_prior, T.zeros(c_prior.shape)) +
-                         binary_crossentropy(c_post, T.ones(c_post.shape)) +
-                         binary_crossentropy(c_fake, T.zeros(c_fake.shape)))
+        loss_crit = binary_crossentropy(c_post, T.ones(c_post.shape)) + binary_crossentropy(c_fake, T.zeros(c_fake.shape))
 
-        loss_actor = 0.5*(binary_crossentropy(c_fake, T.ones(c_fake.shape)) +
-                          self.lambda_dist * ldist)
+        loss_actor = binary_crossentropy(c_fake, T.ones(c_fake.shape)) + self.lambda_dist * ldist
 
         params_crit = get_all_params([c_out_layer], trainable=True)
         grads_crit = T.grad(loss_crit, params_crit)
