@@ -78,7 +78,7 @@ class vaeGAN(object):
         qz = get_output(self._qz, inputs={l_y: y, l_x: x})
         tz = get_output(a_out_layer, inputs={self._l_input_actor:pz})
 
-        ldist = 1. / self._sigma_q**2 * T.log(1 + (pz - tz)**2)
+        ldist = (1. / self._sigma_q**2 * T.log(1 + (pz - tz)**2)).mean()
 
         c_post = get_output(c_out_layer, inputs={self._l_input_critic:qz})
         c_fake = get_output(c_out_layer, inputs={self._l_input_critic:tz})
