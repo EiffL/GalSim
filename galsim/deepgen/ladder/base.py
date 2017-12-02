@@ -105,12 +105,12 @@ class ladder(object):
         # Get outputs from the generative network for a given code TODO: Find a way to remove dependence on x
         inputs = {self.code_layer: self._z, self.l_y: self._y}
         x_smpl = get_output(self.output_layer, inputs=inputs, deterministic=True, alternative_path=True)
-        self._decoder = theano.function([self._z, self._y], x_smpl)
+        self._decoder = theano.function([self._z], x_smpl)
 
         # Get outputs from the recognition network
         inputs = {self.l_x: self._x, self.l_y: self._y}
         z_smpl = get_output(self.code_layer, inputs=inputs, deterministic=True)
-        self._code_sampler = theano.function([self._x, self._y], z_smpl)
+        self._code_sampler = theano.function([self._x], z_smpl)
 
         # Get outputs from the prior network
         pz_smpl = get_output(self.steps[-1].pz_smpl, inputs={self.l_y: self._y}, deterministic=True)
@@ -119,7 +119,7 @@ class ladder(object):
         # Get reconstruction of auto-encoder
         inputs = {self.l_x: self._x, self.l_y: self._y}
         x_rec = get_output(self.output_layer, inputs=inputs, deterministic=True)
-        self._reconstruct = theano.function([self._x, self._y], x_rec)
+        self._reconstruct = theano.function([self._x], x_rec)
 
     def transform(self, X, y):
         """
@@ -144,8 +144,8 @@ class ladder(object):
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(nsamples/self.batch_size)):
-            z = self._code_sampler(floatX(X[i*self.batch_size:(i+1)*self.batch_size]),
-                                   floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            z = self._code_sampler(floatX(X[i*self.batch_size:(i+1)*self.batch_size]))#,
+                                   #floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(z)
 
         if nsamples % (self.batch_size) > 0 :
@@ -155,7 +155,7 @@ class ladder(object):
             xdata[:ni] = X[i*self.batch_size:]
             ydata = np.zeros((self.batch_size, y.shape[1]))
             ydata[:ni] = y[i*self.batch_size:]
-            z = self._code_sampler(floatX(xdata), floatX(ydata))
+            z = self._code_sampler(floatX(xdata)) #, floatX(ydata))
 
             res.append(z[:ni])
 
@@ -192,8 +192,8 @@ class ladder(object):
 
         # Process data using batches, for optimisation and memory constraints
         for i in range(int(n_samples/self.batch_size)):
-            X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size]),
-                        floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            X = sampler(floatX(h[i*self.batch_size:(i+1)*self.batch_size])) #,
+                        #floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
             res.append(X)
 
         if n_samples % (self.batch_size) > 0 :
@@ -203,7 +203,7 @@ class ladder(object):
             hdata[:ni] = h[i*self.batch_size:]
             ydata = np.zeros((self.batch_size, y.shape[1]))
             ydata[:ni] = y[i*self.batch_size:]
-            X = sampler(floatX(hdata),  floatX(ydata))
+            X = sampler(floatX(hdata)) #,  floatX(ydata))
 
             res.append(X[:ni])
 
