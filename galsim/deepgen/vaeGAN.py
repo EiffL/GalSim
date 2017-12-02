@@ -92,7 +92,7 @@ class vaeGAN(object):
         loss_c_fake = c_fake.mean()
 
         # Building cost functions for wGAN-GP
-        loss_c = loss_c_fake - loss_d_real + 10. * grad_penalty
+        loss_c = loss_c_fake - loss_c_real + 10. * grad_penalty
         loss_a = - loss_c_fake + self.lambda_dist * ldist
 
         params_crit = get_all_params([c_out_layer], trainable=True)
