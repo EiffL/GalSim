@@ -76,14 +76,14 @@ class ladder(object):
         # Building the cost function
         # Reconstruction error
         self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma, diagCovariance=diagCovariance)]
-        
+
         # KL divergence of probabilistic layers
         for s in self.steps:
             if s.KL_term is not None:
                 self.cost_layers.append(s.KL_term)
         # Summing terms
         self.cost_layer = ElemwiseSumLayer(self.cost_layers)
-        
+
         # Outputs for training
         inputs = {self.l_x: self._x, self.l_y: self._y, self.l_sigma: self._sigma}
         LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1]], inputs=inputs)
@@ -93,9 +93,9 @@ class ladder(object):
 
         # Compute gradients
         grads = T.grad(- LL.mean(), params)
-        clip_grad = 1.
-        cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
-        updates = adam(cgrads, params, learning_rate=self._lr)
+        #clip_grad = 1.
+        #cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
+        updates = adam(grads, params, learning_rate=self._lr)
     
         # Training function
         self._trainer = theano.function([self._x, self._y, self._sigma, self._lr],
