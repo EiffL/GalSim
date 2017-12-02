@@ -31,7 +31,7 @@ class vaeGAN(object):
         self._sigma_q = T.vector('sigma_q')
         self._mu_q = T.vector('mu_q')
         self.learning_rate= T.scalar('lr')
-        self._eps = T.scalar('epsilon')
+        self._eps = T.matrix('epsilon')
         self.batch_size = self.ladder.batch_size
         self.n_hidden = self.ladder.steps[-1].n_hidden
 
