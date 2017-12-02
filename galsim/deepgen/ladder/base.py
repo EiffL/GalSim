@@ -32,7 +32,7 @@ class ladder(object):
         self.n_c = n_c
         self.n_x = n_x
         self.n_y = n_y
-        
+
         # Input variable
         self._x = T.tensor4('x')
         # Input condition
@@ -62,10 +62,10 @@ class ladder(object):
             print("bottom-up", get_output_shape(d_mu))
 
         # The last step of the ladder should be the posterior/prior element
-        self.code_layer = d_mu
+        self.code_layer = FlattenLayer(d_mu)
 
         # Connect the probabilistic downward pass
-        p = self.code_layer
+        p = ReshapeLayer(self.code_layer, get_output_shape(d_mu))
         for i, s in enumerate(self.steps[::-1]):
             p = s.connect_downward(p, self.l_y, self._rng)
             print("top-down", get_output_shape(p))
@@ -96,7 +96,7 @@ class ladder(object):
         #clip_grad = 1.
         #cgrads = [T.clip(g, -clip_grad, clip_grad) for g in grads]
         updates = adam(grads, params, learning_rate=self._lr)
-    
+
         # Training function
         self._trainer = theano.function([self._x, self._y, self._sigma, self._lr],
                                         [-LL.mean(), log_px.mean(), klp.mean()],
@@ -187,7 +187,7 @@ class ladder(object):
 
         res = []
         n_samples  = h.shape[0]
-        
+
         sampler = self._decoder
 
         # Process data using batches, for optimisation and memory constraints
@@ -204,7 +204,7 @@ class ladder(object):
             ydata = np.zeros((self.batch_size, y.shape[1]))
             ydata[:ni] = y[i*self.batch_size:]
             X = sampler(floatX(hdata),  floatX(ydata))
-                
+
             res.append(X[:ni])
 
         # Concatenate processed data
@@ -257,11 +257,9 @@ class ladder(object):
         Returns model parameters
         """
         return get_all_param_values(self.cost_layer)
-    
+
     def set_params(self, params):
         """
         Sets model parameters for all layers
         """
         set_all_param_values(self.cost_layer, params)
-
-        

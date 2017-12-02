@@ -529,7 +529,7 @@ class gaussian_prior_step(ladder_step):
         # Reshape layer to form an image
         network = DenseLayer(network, num_units=self.n_hidden*self.input_shape[-1]**2,
                              nonlinearity=self.nonlinearity)
-        network = ReshapeLayer(network, shape=self.input_shape)
+        network = ReshapeLayer(network, shape=get_output_shape(self.qz_mu))
 
         # Conditional prior distribution
         self.pz_mu = Conv2DLayer(network, num_filters=self.n_hidden,
