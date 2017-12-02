@@ -503,7 +503,7 @@ class gaussian_prior_step(ladder_step):
             m = z
             for j in h_size:
                 m = ARConv2DLayer(m, num_filters=j, filter_size=3, pad='same', nonlinearity=elu, flipmask=flipmask)
-            m = ARConv2DLayer(m, num_filters=self.latent_dim, filter_size=3, pad='same', nonlinearity=identity, flipmask=flipmask)
+            m = ARConv2DLayer(m, num_filters=self.n_hidden, filter_size=3, pad='same', nonlinearity=identity, flipmask=flipmask)
 
             # Only parametrising the mean, following recommendations from Kingma
             z = ElemwiseSumLayer([z, m])
