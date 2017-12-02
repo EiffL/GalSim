@@ -13,8 +13,9 @@ from lasagne.layers import DenseLayer, InputLayer, ConcatLayer, ReshapeLayer, Fl
 from lasagne.nonlinearities import sigmoid, rectify, elu, tanh, identity, softmax
 from lasagne.updates import adam, total_norm_constraint, apply_momentum, rmsprop, adamax
 from lasagne.init import GlorotUniform, Constant
-from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer
+from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer, ElemwiseMergeLayer
 from lasagne.layers.dnn import Conv2DDNNLayer, Pool2DDNNLayer
+from theano.tensor.nnet import binary_crossentropy
 
 class vaeGAN(object):
 
@@ -29,6 +30,9 @@ class vaeGAN(object):
         self._a_in = T.matrix('a_in')
         self._sigma_q = T.vector('sigma_q')
         self._mu_q = T.vector('mu_q')
+	self.learning_rate= T.scalar('lr')
+	self.batch_size = self.ladder.batch_size
+	self.n_hidden = self.ladder.steps[-1].n_hidden
 
         self._build()
 
@@ -38,10 +42,10 @@ class vaeGAN(object):
         """
 
         # Extracts the sampling layers
-        self._pz = self.ladder.prior_layer
+        self._pz = self.ladder.steps[-1].pz_smpl
         self._qz = self.ladder.code_layer
-        l_x, l_y = self.ladder.input_layers
-        x, y = self.ladder.input_variables
+        l_x, l_y = (self.ladder.l_x,self.ladder.l_y)
+        x, y = (self.ladder._x, self.ladder._y)
 
         #  Definition of the critic
         self._l_input_critic = InputLayer(shape=(self.batch_size, self.n_hidden),
@@ -68,35 +72,44 @@ class vaeGAN(object):
 
         # Creating the loss functions
         # First, critic loss
-        c_prior = get_output(self.c_out_logits,
-                             inputs={self._l_input_critic: self._pz, l_y: y})
-        c_post  = get_output(self.c_out_logits,
-                             inputs={self._l_input_critic: self._qz, l_y: y,
-                             l_x: x})
-        c_fake, zp, zt  = get_output([self.c_out_logits, self._pz, a_out_layer],
-                                     inputs={self._l_input_critic: a_out_layer,
-                                     l_y: y,
-                                     self._l_input_actor: self._pz})
 
-        ldist = 1. / self._sigma_q**2 * T.log(1 + (zp - zt)**2)
+        pz = get_output(self._pz, inputs={l_y: y})
+        qz = get_output(self._qz, inputs={l_y: y, l_x: x})
+        tz = get_output(a_out_layer, inputs={self._l_input_actor:pz})
+
+        c_prior = get_output(c_out_layer, inputs={self._l_input_critic:pz})
+        c_post  = get_output(c_out_layer, inputs={self._l_input_critic:qz})
+        c_fake  = get_output(c_out_layer, inputs={self._l_input_critic:tz})
+
+        #c_prior = get_output(c_out_layer,
+        #                     inputs={self._l_input_critic: self._pz, l_y: y})
+        #c_post  = get_output(c_out_layer,
+        #                     inputs={self._l_input_critic: self._qz, l_y: y,
+        #                     l_x: x})
+        #c_fake, zp, zt  = get_output([c_out_layer, self._pz, a_out_layer],
+        #                             inputs={self._l_input_critic: a_out_layer,
+        #                             l_y: y,
+        #                             self._l_input_actor: self._pz})
+
+        ldist = 1. / self._sigma_q**2 * T.log(1 + (pz - tz)**2)
 
         loss_crit = binary_crossentropy(c_post, T.ones(c_post.shape)) + binary_crossentropy(c_fake, T.zeros(c_fake.shape))
 
         loss_actor = binary_crossentropy(c_fake, T.ones(c_fake.shape)) + self.lambda_dist * ldist
 
         params_crit = get_all_params([c_out_layer], trainable=True)
-        grads_crit = T.grad(loss_crit, params_crit)
+        grads_crit = T.grad(loss_crit.mean(), params_crit)
         updates_crit = adam(grads_crit, params_crit,
                             learning_rate=self.learning_rate)
 
         params_actor = get_all_params([a_out_layer], trainable=True)
-        grads_actor = T.grad(loss_actor, params_actor)
+        grads_actor = T.grad(loss_actor.mean(), params_actor)
         updates_actor = adam(grads_actor, params_actor,
                              learning_rate=self.learning_rate)
 
-        self._trainer_crit = theano.function([x, y], loss_crit,
+        self._trainer_crit = theano.function([x, y, self.learning_rate], loss_crit.mean(),
                                              updates=updates_crit)
-        self._trainer_actor = theano.function([y], loss_actor,
+        self._trainer_actor = theano.function([y, self._sigma_q, self.learning_rate], loss_actor.mean(),
                                               updates=updates_actor)
 
-        self._gen_sampl = theano.function([y], zt)
+        self._gen_sampl = theano.function([y], tz)
