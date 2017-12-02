@@ -6,7 +6,7 @@ import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 import numpy as np
-
+from lasagne.layers import ReshapeLayer, FlattenLayer
 from lasagne.layers import get_output, get_all_params, get_all_param_values, set_all_param_values, get_output_shape, InputLayer, ElemwiseSumLayer
 from lasagne.updates import adam, total_norm_constraint
 from lasagne.regularization import regularize_network_params, l2
