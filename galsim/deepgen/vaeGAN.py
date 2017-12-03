@@ -33,7 +33,7 @@ class vaeGAN(object):
         self.learning_rate= T.scalar('lr')
         self._eps = T.matrix('epsilon')
         self.batch_size = self.ladder.batch_size
-        self.n_hidden = self.ladder.steps[-1].n_hidden
+        self.n_hidden = get_output_shape(self.ladder.code_layer)[1]
 
         self._build()
 
@@ -54,7 +54,6 @@ class vaeGAN(object):
         network = DenseLayer(self._l_input_critic, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
-        network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         c_out_layer = DenseLayer(network, num_units=1, nonlinearity=None)
 
         # Definition of the actor
@@ -62,7 +61,6 @@ class vaeGAN(object):
                                                 self.n_hidden),
                                          input_var=self._a_in, name='a_in')
         network = DenseLayer(self._l_input_actor, num_units=2048, nonlinearity=elu)
-        network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         gates = DenseLayer(network, num_units=self.n_hidden, nonlinearity=sigmoid)
