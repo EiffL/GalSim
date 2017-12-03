@@ -43,7 +43,7 @@ class vaeGAN(object):
         """
 
         # Extracts the sampling layers
-        self._pz = self.ladder.steps[-1].pz_smpl
+        self._pz = FlattenLayer(self.ladder.steps[-1].pz_smpl)
         self._qz = self.ladder.code_layer
         l_x, l_y = (self.ladder.l_x,self.ladder.l_y)
         x, y = (self.ladder._x, self.ladder._y)
