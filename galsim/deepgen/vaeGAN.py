@@ -61,7 +61,6 @@ class vaeGAN(object):
         self._l_input_actor = InputLayer(shape=(self.batch_size,
                                                 self.n_hidden),
                                          input_var=self._a_in, name='a_in')
-        network = DenseLayer(self._l_input_actor, num_units=2048, nonlinearity=elu)
         net_y   = batch_norm(DenseLayer(l_y, num_units=2048, nonlinearity=elu))
         network = DenseLayer(ConcatLayer([self._l_input_actor, net_y]), num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
