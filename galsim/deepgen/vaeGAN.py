@@ -51,7 +51,8 @@ class vaeGAN(object):
         #  Definition of the critic
         self._l_input_critic = InputLayer(shape=(self.batch_size, self.n_hidden),
                                           input_var=self._c_in, name='c_in')
-        network = DenseLayer(self._l_input_critic, num_units=2048, nonlinearity=elu)
+        net_y   = batch_norm(DenseLayer(l_y, num_units=2048, nonlinearity=elu))
+        network = DenseLayer(ConcatLayer([self._l_input_critic, net_y]), num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         c_out_layer = DenseLayer(network, num_units=1, nonlinearity=None)
@@ -61,6 +62,8 @@ class vaeGAN(object):
                                                 self.n_hidden),
                                          input_var=self._a_in, name='a_in')
         network = DenseLayer(self._l_input_actor, num_units=2048, nonlinearity=elu)
+        net_y   = batch_norm(DenseLayer(l_y, num_units=2048, nonlinearity=elu))
+        network = DenseLayer(ConcatLayer([self._l_input_actor, net_y]), num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         gates = DenseLayer(network, num_units=self.n_hidden, nonlinearity=sigmoid)
@@ -108,4 +111,5 @@ class vaeGAN(object):
         self._trainer_actor = theano.function([y, self._sigma_q, self.learning_rate], loss_a,
                                               updates=updates_actor)
 
-        self._gen_sampl = theano.function([y], tz)
+        tzd = get_output(a_out_layer, inputs={self._l_input_actor:pz}, deterministic=True)
+        self._gen_sampl = theano.function([y], tzd)
