@@ -70,7 +70,8 @@ class vaeGAN(object):
         z_shift= ElemwiseMergeLayer([gates, ElemwiseSumLayer([self._l_input_actor, dz], coeffs=[-1,1])],
                   merge_function=T.mul)
         a_out_layer = ElemwiseSumLayer([self._l_input_actor, z_shift])
-
+        self.a_out_layer = a_out_layer
+        self.c_out_layer = c_out_layer
         # Creating the loss functions
         # First, critic loss
 
@@ -158,10 +159,10 @@ class vaeGAN(object):
         """
         Returns model parameters
         """
-        return get_all_param_values([a_out_layer, c_out_layer])
+        return get_all_param_values([self.a_out_layer, self.c_out_layer])
 
     def set_params(self, params):
         """
         Sets model parameters for all layers
         """
-        set_all_param_values([a_out_layer, c_out_layer], params)
+        set_all_param_values([self.a_out_layer, self.c_out_layer], params)
