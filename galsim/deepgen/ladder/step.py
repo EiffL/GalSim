@@ -453,7 +453,7 @@ class gmm_prior_step(ladder_step):
         self.top_down_net = p
         return self.top_down_net
 
-class gaussian_prior_step(ladder_step):
+class gaussian_IAF_prior_step(ladder_step):
     """
     Defines a prior using a simple Gaussian,
     also uses a square prior with IAF based on ARConv2DLayer
@@ -553,5 +553,80 @@ class gaussian_prior_step(ladder_step):
             self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
         else:
             self.KL_term = KLLayer(self.log_pz, self.log_qz)
+        self.top_down_net = p
+        return self.top_down_net
+
+
+class gaussian_prior_step(ladder_step):
+    """
+    Defines a prior using a dead simple Gaussian
+    """
+
+    def __init__(self,
+                 n_units=[128, 128],
+                 n_hidden=6,
+                 nonlinearity=elu,
+                 apply_nonlinearity=False):
+        self.n_hidden = n_hidden
+        self.n_units = n_units
+        self.nonlinearity = nonlinearity
+        self.apply_nonlinearity = apply_nonlinearity
+
+    def connect_upward(self, d, y, rng):
+        """
+        Computes the posterior approximation and sample from it
+        """
+        self.d_in = d
+
+        if self.apply_nonlinearity:
+            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+        else:
+            input_net = d
+
+        self.qz_mu = DenseLayer(input_net, num_units=self.n_hidden, nonlinearity=None)
+        self.qz_logvar= ClampLogVarLayer(DenseLayer(input_net, num_units=self.n_hidden, nonlinearity=None))
+
+        # Sample from the Gaussian distribution
+        self.qz0 = GaussianSampleLayer(mean=self.qz_mu, log_var=self.qz_logvar, rng=rng, name='z0_sample')
+        self.qz_smpl = self.qz0
+        self.log_qz = GaussianLikelihoodLayer(z=self.qz0, mean=self.qz_mu, log_var=self.qz_logvar)
+
+        return self.qz_smpl
+
+
+    def connect_downward(self, p, y, rng):
+        """
+        Computes the conditional prior
+        """
+
+        self.batch_size = get_output_shape(p)[0]
+
+        network = y
+        for i in range(len(self.n_units)):
+            network = batch_norm(DenseLayer(network, num_units=self.n_units[i],
+                                          nonlinearity=self.nonlinearity,
+                                          name="prior_%d" % i))
+
+        # Conditional prior distribution
+        self.pz_mu = ReshapeLayer(DenseLayer( network,
+                                                 num_units=self.n_hidden*self.n_gaussians,
+                                                 nonlinearity=identity,
+                                                 name='pz_mu'),
+                                     shape=(self.batch_size, self.n_hidden, self.n_gaussians))
+
+        self.pz_logvar = ClampLogVarLayer(ReshapeLayer(DenseLayer( network,
+                                                      num_units=self.n_hidden*self.n_gaussians,
+                                                      nonlinearity=identity,
+                                                      name='pz_log_var'),
+                                            shape=(self.batch_size, self.n_hidden, self.n_gaussians)))
+
+        # Prior samples
+        self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, rng=rng, name='pz')
+
+        self.log_pz = GaussianLikelihoodLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar)
+
+        # If the IAF is not used, evaluate the KL divergence analytically
+        self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
+        
         self.top_down_net = p
         return self.top_down_net

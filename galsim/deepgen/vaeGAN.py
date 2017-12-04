@@ -41,7 +41,6 @@ class vaeGAN(object):
         """
         Builds the adversarial critic and amortized generator
         """
-
         # Extracts the sampling layers
         self._pz = self.ladder.steps[-1].pz_smpl
         self._qz = self.ladder.code_layer
@@ -51,17 +50,19 @@ class vaeGAN(object):
         #  Definition of the critic
         self._l_input_critic = InputLayer(shape=(self.batch_size, self.n_hidden),
                                           input_var=self._c_in, name='c_in')
-        network = DenseLayer(self._l_input_critic, num_units=2048, nonlinearity=elu)
+        net_y   = batch_norm(DenseLayer(l_y, num_units=2048, nonlinearity=elu))
+        network = DenseLayer(ConcatLayer([self._l_input_critic, net_y]), num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         c_out_layer = DenseLayer(network, num_units=1, nonlinearity=None)
-
+        self.c_out_layer = c_out_layer
         # Definition of the actor
         self._l_input_actor = InputLayer(shape=(self.batch_size,
                                                 self.n_hidden),
                                          input_var=self._a_in, name='a_in')
-        network = DenseLayer(self._l_input_actor, num_units=2048, nonlinearity=elu)
+        net_y   = batch_norm(DenseLayer(l_y, num_units=2048, nonlinearity=elu))
+        network = DenseLayer(ConcatLayer([self._l_input_actor, net_y]), num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
         network = DenseLayer(network, num_units=2048, nonlinearity=elu)
@@ -70,7 +71,7 @@ class vaeGAN(object):
         z_shift= ElemwiseMergeLayer([gates, ElemwiseSumLayer([self._l_input_actor, dz], coeffs=[-1,1])],
                   merge_function=T.mul)
         a_out_layer = ElemwiseSumLayer([self._l_input_actor, z_shift])
-
+        self.a_out_layer = a_out_layer
         # Creating the loss functions
         # First, critic loss
 
@@ -110,4 +111,55 @@ class vaeGAN(object):
         self._trainer_actor = theano.function([y, self._sigma_q, self.learning_rate], loss_a,
                                               updates=updates_actor)
 
-        self._gen_sampl = theano.function([y], tz)
+        tzd = get_output(a_out_layer, inputs={self._l_input_actor:pz}, deterministic=True)
+        self._gen_sampl = theano.function([y], tzd)
+
+    def sample_code(self, y=None, n_samples=None):
+        """
+        Draws samples from the prior distribution conditioned by y.
+        Parameters
+        ----------
+        y: array, of shape (n_samples, n_conditional_features)
+            Conditional variable used by the prior.
+        n_samples: int
+            Number of samples to draw.
+        Returns
+        -------
+        h: array, of shape (n_samples, n_hidden)
+            Randomly drawn code samples.
+        """
+
+        res = []
+        if n_samples is not None:
+            nsamples = min([y.shape[0], n_samples])
+        else:
+            nsamples = y.shape[0]
+
+        # Process data using batches, for optimisation and memory constraints
+        for i in range(int(nsamples/self.batch_size)):
+            z = self._gen_sampl(floatX(y[i*self.batch_size:(i+1)*self.batch_size]))
+            res.append(z)
+
+        if nsamples % (self.batch_size) > 0 :
+            i = int(nsamples/self.batch_size)
+            ni = nsamples % (self.batch_size)
+            ydata = np.zeros((self.batch_size, y.shape[1]))
+            ydata[:ni] = y[i*self.batch_size:]
+            z = self._gen_sampl(floatX(ydata))
+            res.append(z[:ni])
+
+        # Concatenate processed data
+        z = np.concatenate(res)
+        return z
+
+    def get_params(self):
+        """
+        Returns model parameters
+        """
+        return get_all_param_values([self.a_out_layer, self.c_out_layer])
+
+    def set_params(self, params):
+        """
+        Sets model parameters for all layers
+        """
+        set_all_param_values([self.a_out_layer, self.c_out_layer], params)
