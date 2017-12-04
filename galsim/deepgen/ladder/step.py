@@ -609,16 +609,16 @@ class gaussian_prior_step(ladder_step):
 
         # Conditional prior distribution
         self.pz_mu = ReshapeLayer(DenseLayer( network,
-                                                 num_units=self.n_hidden*self.n_gaussians,
+                                                 num_units=self.n_hidden,
                                                  nonlinearity=identity,
                                                  name='pz_mu'),
-                                     shape=(self.batch_size, self.n_hidden, self.n_gaussians))
+                                     shape=(self.batch_size, self.n_hidden))
 
         self.pz_logvar = ClampLogVarLayer(ReshapeLayer(DenseLayer( network,
-                                                      num_units=self.n_hidden*self.n_gaussians,
+                                                      num_units=self.n_hidden,
                                                       nonlinearity=identity,
                                                       name='pz_log_var'),
-                                            shape=(self.batch_size, self.n_hidden, self.n_gaussians)))
+                                            shape=(self.batch_size, self.n_hidden)))
 
         # Prior samples
         self.pz_smpl = GaussianSampleLayer(mean=self.pz_mu, log_var=self.pz_logvar, rng=rng, name='pz')
@@ -627,6 +627,6 @@ class gaussian_prior_step(ladder_step):
 
         # If the IAF is not used, evaluate the KL divergence analytically
         self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
-        
+
         self.top_down_net = p
         return self.top_down_net
