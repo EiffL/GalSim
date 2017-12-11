@@ -9,7 +9,7 @@ import lasagne.layers
 from lasagne.layers import get_output_shape, get_output, DropoutLayer
 from lasagne.nonlinearities import sigmoid, rectify
 
-from ..layers.masked import MaskGenerator, MaskedLayer
+#from ..layers.masked import MaskGenerator, MaskedLayer
 
 class SeedGenerator(object):
     # This subclass purpose is to maximize randomness and still keep reproducibility
