@@ -4,7 +4,7 @@ import theano.tensor as T
 import theano
 
 import lasagne
-from lasagne.nonlinearities import sigmoid, rectify, elu, tanh, identity, softmax
+from lasagne.nonlinearities import sigmoid, rectify, leaky_rectify, tanh, identity, softmax
 from lasagne.init import GlorotUniform, Constant
 from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer, Conv2DLayer, BatchNormLayer
 from lasagne.layers import DenseLayer, InputLayer, ConcatLayer, ReshapeLayer, FlattenLayer, NonlinearityLayer, get_output, get_all_params, batch_norm, get_output_shape
@@ -70,9 +70,9 @@ class input_step(ladder_step):
 
         input_net = d
         if self.n_filters is not None:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters, filter_size=self.filter_size, stride=stride, nonlinearity=elu, pad='same')
+            input_net = Conv2DLayer(input_net, num_filters=self.n_filters, filter_size=self.filter_size, stride=stride, nonlinearity=leaky_rectify, pad='same')
         elif self.downsample:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, stride=stride, nonlinearity=elu, pad='same')
+            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, stride=stride, nonlinearity=leaky_rectify, pad='same')
 
         self.bottom_up_net = input_net
 
@@ -158,12 +158,12 @@ class resnet_step(ladder_step):
 
         # If the input needs to be reshaped in any way we do it first
         if self.n_filters_in != self.n_filters or self.downsample:
-            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+            input_net = NonlinearityLayer(BatchNormLayer(d), leaky_rectify)
             branch = input_net
         else:
             input_net = d
             branch = d
-            branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+            branch = NonlinearityLayer(BatchNormLayer(branch), leaky_rectify)
 
         #
         # Main branch
@@ -178,7 +178,7 @@ class resnet_step(ladder_step):
 
             branch = SliceLayer(branch, indices=slice(0,-2*self.latent_dim), axis=1)
 
-        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = NonlinearityLayer(BatchNormLayer(branch), leaky_rectify)
         branch = Conv2DLayer(branch, num_filters=self.n_filters, filter_size=3, stride=stride, nonlinearity=identity, pad='same', W=he_norm)
 
         #
@@ -202,12 +202,12 @@ class resnet_step(ladder_step):
 
         # If the input needs to be reshaped in any way we do it first
         if self.n_filters_in != self.n_filters or self.downsample:
-            input_net = NonlinearityLayer(BatchNormLayer(p), elu)
+            input_net = NonlinearityLayer(BatchNormLayer(p), leaky_rectify)
             branch = input_net
         else:
             input_net = p
             branch = BatchNormLayer(p)
-            branch = NonlinearityLayer(branch, elu)
+            branch = NonlinearityLayer(branch, leaky_rectify)
 
         if self.latent_dim > 0:
             #
@@ -240,7 +240,7 @@ class resnet_step(ladder_step):
                 flipmask = ((i % 2) == 1)
                 m = z
                 for j in h_size:
-                    m = ARConv2DLayer(m, num_filters=j, filter_size=3, pad='same', nonlinearity=elu, flipmask=flipmask)
+                    m = ARConv2DLayer(m, num_filters=j, filter_size=3, pad='same', nonlinearity=leaky_rectify, flipmask=flipmask)
                 m = ARConv2DLayer(m, num_filters=self.latent_dim, filter_size=3, pad='same', nonlinearity=identity, flipmask=flipmask)
 
                 # Only parametrising the mean, following recommendations from Kingma
@@ -271,8 +271,8 @@ class resnet_step(ladder_step):
             branch_prior = SliceLayer(branch, indices=slice(-2*self.latent_dim, None), axis=1)
 
             # Mixing with info from the top-down posterior branch
-            branch_prior = ConcatLayer( [NonlinearityLayer(branch_prior, elu),
-                                         NonlinearityLayer(branch_posterior, elu)] )
+            branch_prior = ConcatLayer( [NonlinearityLayer(branch_prior, leaky_rectify),
+                                         NonlinearityLayer(branch_posterior, leaky_rectify)] )
             branch_prior = Conv2DLayer(branch_prior,
                                 num_filters=2*self.latent_dim,
                                 filter_size=3,
@@ -297,7 +297,7 @@ class resnet_step(ladder_step):
             self.pz_smpl = None
             self.KL_term = None
 
-        branch = NonlinearityLayer(BatchNormLayer(branch), elu)
+        branch = NonlinearityLayer(BatchNormLayer(branch), leaky_rectify)
         branch = Conv2DLayer(branch,
                              num_filters=self.n_filters_in,
                              filter_size=3,
@@ -307,7 +307,8 @@ class resnet_step(ladder_step):
                              W=he_norm)
 
         if self.n_filters_in != self.n_filters or self.downsample:
-            shortcut = deconvolution(input_net, num_filters=self.n_filters_in, nonlinearity=identity,  stride=stride)
+            shortcut = deconvolution(input_net, num_filters=self.n_filters_in,
+                                     nonlinearity=identity,  stride=stride, filter_size=5)
         else:
             shortcut = input_net
 
@@ -320,7 +321,7 @@ class resnet_step(ladder_step):
 
 class dens_step(ladder_step):
 
-    def __init__(self, n_units=128, nonlinearity=elu):
+    def __init__(self, n_units=128, nonlinearity=leaky_rectify):
         """
 
         """
@@ -344,10 +345,10 @@ class dens_step(ladder_step):
         # Main branch
         #
         branch = batch_norm(DenseLayer(branch, num_units=self.n_units_in,
-                                    nonlinearity=elu,
+                                    nonlinearity=leaky_rectify,
                                     W=he_norm))
         branch = batch_norm(DenseLayer(branch, num_units=self.n_units,
-                                    nonlinearity=elu,
+                                    nonlinearity=leaky_rectify,
                                     W=he_norm))
 
         self.bottom_up_net = branch
@@ -370,8 +371,8 @@ class dens_step(ladder_step):
         #
         # Main branch
         #
-        branch = batch_norm(DenseLayer(branch, num_units=self.n_units, nonlinearity=elu, W=he_norm))
-        branch = batch_norm(DenseLayer(branch, num_units=self.n_units_in, nonlinearity=elu, W=he_norm))
+        branch = batch_norm(DenseLayer(branch, num_units=self.n_units, nonlinearity=leaky_rectify, W=he_norm))
+        branch = batch_norm(DenseLayer(branch, num_units=self.n_units_in, nonlinearity=leaky_rectify, W=he_norm))
 
         self.top_down_net = ReshapeLayer(branch,  shape=self.input_shape)
         return self.top_down_net
@@ -387,7 +388,7 @@ class gmm_prior_step(ladder_step):
                  n_hidden=6,
                  n_gaussians=512,
                  IAF_sizes=[],
-                 nonlinearity=elu,
+                 nonlinearity=leaky_rectify,
                  apply_nonlinearity=False):
         self.n_gaussians = n_gaussians
         self.n_hidden = n_hidden
@@ -403,7 +404,7 @@ class gmm_prior_step(ladder_step):
         self.d_in = d
 
         if self.apply_nonlinearity:
-            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+            input_net = NonlinearityLayer(BatchNormLayer(d), leaky_rectify)
         else:
             input_net = d
 
@@ -478,7 +479,7 @@ class gaussian_IAF_prior_step(ladder_step):
                  n_units=[128, 128],
                  n_hidden=8,
                  IAF_sizes=[],
-                 nonlinearity=elu,
+                 nonlinearity=leaky_rectify,
                  apply_nonlinearity=False):
         self.n_hidden = n_hidden
         self.n_units = n_units
@@ -495,7 +496,7 @@ class gaussian_IAF_prior_step(ladder_step):
         he_norm = HeNormal(gain='relu')
 
         if self.apply_nonlinearity:
-            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+            input_net = NonlinearityLayer(BatchNormLayer(d), leaky_rectify)
         else:
             input_net = d
 
@@ -517,7 +518,7 @@ class gaussian_IAF_prior_step(ladder_step):
             flipmask = ((i % 2) == 1)
             m = z
             for j in h_size:
-                m = ARConv2DLayer(m, num_filters=j, filter_size=3, pad='same', nonlinearity=elu, flipmask=flipmask)
+                m = ARConv2DLayer(m, num_filters=j, filter_size=3, pad='same', nonlinearity=leaky_rectify, flipmask=flipmask)
             m = ARConv2DLayer(m, num_filters=self.n_hidden, filter_size=3, pad='same', nonlinearity=identity, flipmask=flipmask)
 
             # Only parametrising the mean, following recommendations from Kingma
@@ -580,7 +581,7 @@ class gaussian_prior_step(ladder_step):
     def __init__(self,
                  n_units=[128, 128],
                  n_hidden=6,
-                 nonlinearity=elu,
+                 nonlinearity=leaky_rectify,
                  apply_nonlinearity=False):
         self.n_hidden = n_hidden
         self.n_units = n_units
@@ -594,7 +595,7 @@ class gaussian_prior_step(ladder_step):
         self.d_in = d
 
         if self.apply_nonlinearity:
-            input_net = NonlinearityLayer(BatchNormLayer(d), elu)
+            input_net = NonlinearityLayer(BatchNormLayer(d), leaky_rectify)
         else:
             input_net = d
 
