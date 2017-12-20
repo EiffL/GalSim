@@ -25,7 +25,7 @@ TODO: Add documentation.
 """
 import galsim
 
-import cPickle as pickle
+import _pickle as pickle
 
 from abc import ABCMeta, abstractmethod
 
@@ -45,12 +45,12 @@ class GenerativeGalaxyModel(object):
         and features to predict
         """
         self.quantities = quantities
-        
+
         # Add these quantities as required parameters for the sampling
         self.sample_req_params = {}
         self.sample_opt_params = {}
         self.sample_single_params = []
-    
+
         for q in quantities:
             self.sample_req_params[q] = float
 
@@ -81,8 +81,8 @@ class GenerativeGalaxyModel(object):
         """
         Reads in a pickled file and initialise object
         """
-        f = file(file_name, 'rb')
+        f = open(file_name, 'rb')
         all_params = pickle.load(f)
         f.close()
-        
+
         return cls(*all_params)

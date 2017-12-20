@@ -4,6 +4,49 @@ import lasagne
 import theano.tensor as T
 import theano
 
+class ComplexMultLayer(lasagne.layers.MergeLayer):
+    """
+    Multiplies the inputs together assuming they are complex numbers stored
+    in real and imaginary parts along the last dimension
+
+    Parameters
+    ----------
+
+    incomings : a list of :class:`Layer` instances or tuples
+        The layers feeding into this layer, or expected input shapes
+    """
+
+    def __init__(self, a, b, **kwargs):
+        super(ComplexMultLayer, self).__init__([a, b], **kwargs)
+
+    def get_output_shape_for(self, input_shapes):
+        # Infer the output shape by grabbing, for each axis, the first
+        # input size that is not `None` (if there is any)
+        output_shape = tuple(next((s for s in sizes if s is not None), None)
+                             for sizes in zip(*input_shapes))
+
+        def match(shape1, shape2):
+            return (len(shape1) == len(shape2) and
+                    all(s1 is None or s2 is None or s1 == s2
+                        for s1, s2 in zip(shape1, shape2)))
+
+        # Check for compatibility with inferred output shape
+        if not all(match(shape, output_shape) for shape in input_shapes):
+            raise ValueError("Mismatch: not all input shapes are the same")
+        return output_shape
+
+    def get_output_for(self, inputs, **kwargs):
+        x, y = inputs
+
+        s = T.shape(x)
+        x2 = T.reshape(x, (-1,2))
+        y2 = T.reshape(y, (-1,2))
+        a = x2[:,0]*y2[:,0] - x2[:,1]*y2[:,1]
+        b = x2[:,0]*y2[:,1] + x2[:,1]*y2[:,0]
+
+        out = T.reshape(T.stack([a, b], axis=0).T, s)
+        return out
+
 class CondConcatLayer(lasagne.layers.MergeLayer):
     """
     Concatenates multiple inputs along the specified axis. Inputs should have

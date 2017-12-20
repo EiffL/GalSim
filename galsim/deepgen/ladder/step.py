@@ -19,7 +19,8 @@ from ..layers.distributions import ClampLogVarLayer, MergeMeanLayer, MergeLogVar
 from ..layers.merge import CondConcatLayer
 from ..distributions import kl_normal2_normal2, log_normal2, log_bernoulli
 
-from ..layers.transform import RFFTLayer, iRFFTLayer
+from ..layers.transform import RFFTLayer, iRFFTLayer, ScaleShiftLayer
+from ..layers.merge import ComplexMultLayer
 from ..blocks.deconvolution import deconvolution
 
 import math
@@ -88,26 +89,40 @@ class input_step(ladder_step):
 
         stride = 2 if self.downsample else 1
         input_net = p
-        if self.downsample:
-            input_net = deconvolution(input_net, num_filters=self.n_filters_in,
-                                      stride=stride, nonlinearity=self.output_nonlinearity)
-        else:
-            input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, nonlinearity=self.output_nonlinearity, pad='same')
+
+        input_net = deconvolution(input_net, num_filters=self.n_filters_in, filter_size=3,
+                                  stride=stride, nonlinearity=self.output_nonlinearity)
+
+        #
+        # if self.downsample:
+        #     input_net = deconvolution(input_net, num_filters=self.n_filters_in,
+        #                               stride=stride, nonlinearity=self.output_nonlinearity)
+        # else:
+        #     input_net = Conv2DLayer(input_net, num_filters=self.n_filters_in, filter_size=self.filter_size, nonlinearity=self.output_nonlinearity, pad='same')
 
         self.top_down_net = input_net
 
         return self.top_down_net
 
 
-    def GaussianLikelihood(self, input_logvar, diagCovariance=True):
+    def GaussianLikelihood(self, input_logvar, input_psf=None, diagCovariance=True):
         """
         This function returns a layers computing a Gaussian likelihood for the model,
         under the assumption that the noise is uncorrelated
         """
+
         if diagCovariance:
-            return GaussianLikelihoodLayer(z=self.d_in, mean=self.top_down_net, log_var=input_logvar)
+            if input_psf is None:
+                out = self.top_down_net
+            else:
+                out = RFFTLayer(self.top_down_net)
+                out = ComplexMultLayer(out, input_psf)
+                out = iRFFTLayer(out)
+            return GaussianLikelihoodLayer(z=self.d_in, mean=out, log_var=input_logvar)
         else:
             out = RFFTLayer(self.top_down_net)
+            if input_psf is not None:
+                out = ComplexMultLayer(out, input_psf)
             z = RFFTLayer(self.d_in)
             return FourierGaussianLikelihoodLayer(z=z, mean=out, log_var=input_logvar, normalise=False)
 
@@ -626,7 +641,7 @@ class gaussian_prior_step(ladder_step):
         self.log_pz = GaussianLikelihoodLayer(z=p, mean=self.pz_mu, log_var=self.pz_logvar)
 
         # If the IAF is not used, evaluate the KL divergence analytically
-        self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar)
+        self.KL_term = KLLayerGaussian(self.qz_mu, self.qz_logvar, self.pz_mu, self.pz_logvar, factor=0.01)
 
         self.top_down_net = p
         return self.top_down_net

@@ -69,7 +69,7 @@ class MergeLogVarLayer(lasagne.layers.MergeLayer):
 
     def get_output_for(self, inputs, **kwargs):
         d_logvar, t_logvar = inputs
-    
+
         if self.conjugate:
 
             invsig2_t = T.exp(- t_logvar)
@@ -89,20 +89,20 @@ class BernoulliLikelihoodLayer(lasagne.layers.MergeLayer):
         self.epsilon = epsilon
         self.in_shape = get_output_shape(z)
         self.in_logvar_shape = get_output_shape(log_var)
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         z, mean = inputs
         pz = log_bernoulli(z, mean, eps=self.epsilon)
         return pz.sum(axis=range(1,len(self.in_shape)))
- 
+
 class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     """
     Computes the log likelihood with a Gaussian model
     """
-    
+
     def __init__(self, z, mean, log_var, epsilon=0, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
@@ -111,10 +111,10 @@ class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
 
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         z, mean, logvar = inputs
-        
+
         # First make sure all dimensions with ones are broadcastable
         dims = []
         for i,s in enumerate(self.in_logvar_shape):
@@ -122,9 +122,9 @@ class GaussianLikelihoodLayer(lasagne.layers.MergeLayer):
                 dims.append(i)
         if len(dims) >0:
             logvar = T.addbroadcast(logvar, *dims)
-        
+
         # If logvar is a diagonal, pad it to the right until we match the dimension of x
-        if len(self.in_logvar_shape) < len(self.in_shape):                                  
+        if len(self.in_logvar_shape) < len(self.in_shape):
             logvar = T.shape_padright(logvar, n_ones=(len(self.in_shape) - len(self.in_logvar_shape)))
 
         pz = log_normal2(z, mean, logvar, eps=self.epsilon)
@@ -134,30 +134,31 @@ class FourierGaussianLikelihoodLayer(lasagne.layers.MergeLayer):
     """
     Computes the log likelihood with a Gaussian model
     """
-    
+
     def __init__(self, z, mean, log_var, epsilon=0, log_var_max=5, normalise=True, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var], **kwargs)
         self.epsilon = epsilon
         self.log_var_max = log_var_max
         self.in_shape = get_output_shape(z)
         self.normalise = normalise
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         z, mean, log_var = inputs
-        
-        
+
         # Ok, here we assume the logvar to have the same shape as our images
         pz = - ((z - mean)**2).sum(axis=-1) / (2 * T.exp(log_var) + self.epsilon)
+        # Account for Fourier transform normalization
+        pz /= 1.0*self.in_shape[-3]**2
         if self.normalise:
             c = - 0.5 * math.log(2*math.pi)
             pz = pz + c - log_var/2
-        
+
         # Exclude from likelihood points where the variance is essentially 0
         pz = T.where(log_var >= self.log_var_max, 0, pz)
-        
+
         return pz.sum(axis=range(1,len(self.in_shape[:-1])))
 
 
@@ -165,14 +166,14 @@ class GMLikelihoodLayer(lasagne.layers.MergeLayer):
     """
     Computes the elementwise log likelihood with a Gaussian mixture model
     """
-    
+
     def __init__(self, z, mean, log_var, weight, epsilon=1e-7, **kwargs):
         super(self.__class__, self).__init__([z,mean,log_var, weight], **kwargs)
         self.epsilon = epsilon
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0][0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         z, mean, log_var, w = inputs
         return log_gm2(z, mean, log_var, w, eps=self.epsilon)
@@ -181,64 +182,65 @@ class KLLayer(lasagne.layers.MergeLayer):
     """
     Merges log likelihoods from prior and posterior into a KL divergence
     """
-        
+
     def __init__(self, log_pz, log_qz, negative=True, factor=1,  **kwargs):
         super(self.__class__, self).__init__([log_pz, log_qz], **kwargs)
         self.negative = negative
         self.factor = factor
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         log_pz, log_qz = inputs
-        
+
         kl = floatX(self.factor) *( log_qz - log_pz)
         if self.negative:
             return - kl
         else:
             return kl
-    
+
 class KLLayerGaussian(lasagne.layers.MergeLayer):
     """
     Merges log likelihoods from prior and posterior into a KL divergence
     """
-        
-    def __init__(self, mean1, log_var1, mean2, log_var2, negative=True,  **kwargs):
+
+    def __init__(self, mean1, log_var1, mean2, log_var2, negative=True, factor=1, **kwargs):
         super(self.__class__, self).__init__([mean1, log_var1, mean2, log_var2], **kwargs)
+        self.factor = factor
         self.negative = negative
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         mean1, log_var1, mean2, log_var2 = inputs
-        
+
         kl = kl_normal2_normal2(mean1, log_var1, mean2, log_var2)
-        kl = kl.flatten(ndim=2).sum(axis=1)
-        
+        kl = kl.flatten(ndim=2).sum(axis=1) * self.factor
+
         if self.negative:
             return - kl
         else:
             return kl
-        
+
 class KLLayerGaussianMixture(lasagne.layers.MergeLayer):
     """
     Merges log likelihoods from prior and posterior into a KL divergence
     """
-        
+
     def __init__(self, mean1, log_var1, mean2, log_var2, weights2, negative=True,  **kwargs):
         super(self.__class__, self).__init__([mean1, log_var1, mean2, log_var2, weights2], **kwargs)
         self.negative = negative
-        
+
     def get_output_shape_for(self, input_shapes):
         return [input_shapes[0]]
-    
+
     def get_output_for(self, inputs, **kwargs):
         mean1, log_var1, mean2, log_var2, weights2 = inputs
-        
+
         kl = kl_normal2_gm2(mean1, log_var1, mean2, log_var2, weights2)
-        
+
         if self.negative:
             return - kl
         else:

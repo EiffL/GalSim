@@ -43,6 +43,8 @@ class ladder(object):
         self._lr = T.scalar('lr')
         # Variable for noise standard deviation
         self._sigma = T.tensor4('sigma')
+        # Variable for psf shape
+        self._psf = T.tensor5('psf')
         # Random number stream
         self._rng = RandomStreams(seed=234)
 
@@ -52,6 +54,7 @@ class ladder(object):
         self.l_y = InputLayer(shape=(self.batch_size, self.n_y),
                               input_var=self._y, name='y')
         self.l_sigma = InputLayer(shape=(self.batch_size, self.n_c, None, None), input_var=self._sigma, name='sigma')
+        self.l_psf = InputLayer(shape=(self.batch_size, self.n_c, None, None,2), input_var=self._psf, name='psf')
 
         ### Build and connect network
         # Connect the deterministic upward pass
@@ -75,7 +78,9 @@ class ladder(object):
 
         # Building the cost function
         # Reconstruction error
-        self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma, diagCovariance=diagCovariance)]
+        self.cost_layers = [steps[0].GaussianLikelihood(self.l_sigma,
+                                                        input_psf=self.l_psf,
+                                                        diagCovariance=diagCovariance)]
 
         # KL divergence of probabilistic layers
         for s in self.steps:
@@ -85,7 +90,7 @@ class ladder(object):
         self.cost_layer = ElemwiseSumLayer(self.cost_layers)
 
         # Outputs for training
-        inputs = {self.l_x: self._x, self.l_y: self._y, self.l_sigma: self._sigma}
+        inputs = {self.l_x: self._x, self.l_psf: self._psf, self.l_y: self._y, self.l_sigma: self._sigma}
         LL, log_px, klp = get_output([self.cost_layer, self.cost_layers[0], self.cost_layers[-1]], inputs=inputs)
 
         # Get trainable parameters and generate updates
@@ -98,7 +103,7 @@ class ladder(object):
         updates = adam(grads, params, learning_rate=self._lr)
 
         # Training function
-        self._trainer = theano.function([self._x, self._y, self._sigma, self._lr],
+        self._trainer = theano.function([self._x, self._psf, self._y, self._sigma, self._lr],
                                         [-LL.mean(), log_px.mean(), klp.mean()],
                                         updates=updates)
 

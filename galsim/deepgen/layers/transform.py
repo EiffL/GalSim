@@ -64,8 +64,9 @@ class RFFTLayer(lasagne.layers.Layer):
     Expects images of the form [batch, nc, n_x, n_x]
     """
 
-    def __init__(self, input, **kwargs):
+    def __init__(self, input, norm=None, **kwargs):
         super(self.__class__, self).__init__(input, **kwargs)
+        self.norm=norm
 
     def get_output_shape_for(self, input_shape):
         shape = input_shape[:-1]
@@ -76,7 +77,7 @@ class RFFTLayer(lasagne.layers.Layer):
     def get_output_for(self, X, **kwargs):
         s = X.shape
         X = X.reshape((s[0]*s[1],s[2], s[3]))
-        Xt = T.fft.rfft(X, norm='ortho')
+        Xt = T.fft.rfft(X, norm=self.norm)
         snew = Xt.shape
         return  Xt.reshape((s[0], s[1], snew[1], snew[2], 2))
 
@@ -87,9 +88,10 @@ class iRFFTLayer(lasagne.layers.Layer):
     WARNING: square images, even size
     Expects images of the form [batch, nc, n_x, n_x/2 + 1, 2]
     """
-    
-    def __init__(self, input, **kwargs):
+
+    def __init__(self, input, norm=None, **kwargs):
         super(self.__class__, self).__init__(input, **kwargs)
+        self.norm=norm
 
     def get_output_shape_for(self, input_shape):
         s = input_shape
@@ -99,10 +101,10 @@ class iRFFTLayer(lasagne.layers.Layer):
     def get_output_for(self, X, **kwargs):
         s = X.shape
         X2 = X.reshape((s[0]*s[1],s[2], s[3], 2))
-        Xt = T.fft.irfft(X2, norm='ortho')
+        Xt = T.fft.irfft(X2, norm=self.norm)
         snew = Xt.shape
         return  Xt.reshape((s[0], s[1], snew[1], snew[2]))
-    
+
 
 # "Borrowed" from https://github.com/ajbrock/Neural-Photo-Editor/blob/master/layers.py
 # Subpixel Upsample Layer from (https://arxiv.org/abs/1609.05158)
@@ -115,13 +117,13 @@ class SubpixelLayer(lasagne.layers.Layer):
         super(self.__class__, self).__init__(incoming, **kwargs)
         self.r=r # Upscale factor
         self.c=c # number of output channels
-        
+
     def get_output_shape_for(self, input_shape):
         return (input_shape[0],self.c,self.r*input_shape[2],self.r*input_shape[3])
 
     def get_output_for(self, input, deterministic=False, **kwargs):
         out = T.zeros((input.shape[0],self.output_shape[1],self.output_shape[2],self.output_shape[3]))
-        for x in xrange(self.r): # loop across all feature maps belonging to this channel
-            for y in xrange(self.r):
+        for x in range(self.r): # loop across all feature maps belonging to this channel
+            for y in range(self.r):
                 out=T.set_subtensor(out[:,:,x::self.r,y::self.r],input[:, self.r*x+y::self.r*self.r,:,:])
         return out

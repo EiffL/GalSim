@@ -16,6 +16,7 @@ from lasagne.init import GlorotUniform, Constant
 from lasagne.layers import TransposedConv2DLayer, Upscale2DLayer, ElemwiseMergeLayer
 from lasagne.layers.dnn import Conv2DDNNLayer, Pool2DDNNLayer
 from theano.tensor.nnet import binary_crossentropy
+from lasagne.layers import get_all_param_values, set_all_param_values
 
 class vaeGAN(object):
 
