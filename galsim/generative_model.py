@@ -22,6 +22,7 @@ TODO: add more documentation
 """
 import galsim
 import tensorflow as tf
+import numpy as np
 
 class GenerativeGalaxyModel(object):
     """
@@ -32,7 +33,11 @@ class GenerativeGalaxyModel(object):
     _opt_params = {}
     _single_params = []
 
-    def __init__(self, dir=None, tags=None, session_config=None):
+    def __init__(self, export_dir=None,
+                tags=['serve'],
+                signature_name='serving_default',
+                output_name='SBProfile',
+                session_config=None):
         """
         Initialisation of the generator, by loading a tensorflow model
 
@@ -42,31 +47,47 @@ class GenerativeGalaxyModel(object):
             Path to the tensorflow model to load
         """
 
+        # Create new tensorflow session
         self.sess = tf.Session(config=session_config)
 
-        # Load a saved model
-        tf.saved_model.loader.load(sess, tags, export_dir=dir)
+        # Load the saved model in session
+        self.graph_def = tf.saved_model.loader.load(self.sess, tags=tags, export_dir=export_dir)
+        self.graph = tf.get_default_graph()
+
+        # Extracts the signature of requested function
+        signature = self.graph_def.signature_def[signature_name]
+
+        # get the function output
+        self.output = signature.outputs[output_name]
 
         # Add these quantities as required parameters for the sampling
         self.sample_req_params = {}
         self.sample_opt_params = {}
         self.sample_single_params = []
 
-        for q in quantities:
-            self.sample_req_params[q] = float
-
-    def sample(self, catalog,  noise=None,  rng=None, x_interpolant=None, k_interpolant=None,
+    def sample(self, n_samples,  noise=None,  rng=None, x_interpolant=None, k_interpolant=None,
                pad_factor=4, noise_pad_size=0, gsparams=None):
         """
         Samples galaxy images from the model
         """
-        # Build numpy array from data
-        y = np.zeros((len(cat), len(self.quantities)))
-        for j, q in enumerate(self.quantities):
-            y[:, j] = cat[q]
-        y = (y - self.y_shift) / self.y_scaling
 
+        # Run the graph
+        x = self.sess.run(self.output.name)
 
+        # Now, we build an InterpolatedImage for each of these
+        ims = []
+        for i in range(len(x)):
+            im = galsim.Image(np.ascontiguousarray(x[i].reshape((28,28)).astype(np.float64)),
+                              scale=0.03)
+            ims.append(galsim.InterpolatedImage(im,
+                                                x_interpolant=x_interpolant,
+                                                k_interpolant=k_interpolant,
+                                                pad_factor=pad_factor,
+                                                noise_pad_size=noise_pad_size,
+                                                noise_pad=noise,
+                                                rng=rng,
+                                                gsparams=gsparams))
+        return ims
 
 
     @classmethod
